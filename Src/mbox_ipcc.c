@@ -41,14 +41,13 @@
 /* USER CODE END 0 */
 
 /* Private define ------------------------------------------------------------*/
-#define MASTER_CPU_ID       0
-#define REMOTE_CPU_ID       1
-#define IPCC_CPU_A7         MASTER_CPU_ID
-#define IPCC_CPU_M4         REMOTE_CPU_ID
-
-#define RX_NO_MSG           0
-#define RX_NEW_MSG          1
-#define RX_BUF_FREE         2
+#define MASTER_CPU_ID    0
+#define REMOTE_CPU_ID    1
+#define IPCC_CPU_A7      MASTER_CPU_ID
+#define IPCC_CPU_M4      REMOTE_CPU_ID
+#define RX_NO_MSG        0
+#define RX_NEW_MSG       1
+#define RX_BUF_FREE      2
 
 /* Private variables ---------------------------------------------------------*/
 extern IPCC_HandleTypeDef hipcc;
@@ -60,7 +59,6 @@ uint32_t vring1_id = 1; /* used for channel 2 */
 /* Private function prototypes -----------------------------------------------*/
 void IPCC_channel1_callback(IPCC_HandleTypeDef * hipcc, uint32_t ChannelIndex, IPCC_CHANNELDirTypeDef ChannelDir);
 void IPCC_channel2_callback(IPCC_HandleTypeDef * hipcc, uint32_t ChannelIndex, IPCC_CHANNELDirTypeDef ChannelDir);
-
 
 /**
   * @brief  Initialize MAILBOX with IPCC peripheral
@@ -113,7 +111,6 @@ int MAILBOX_Poll(struct virtio_device *vdev)
 
   return -1;
 }
-
 
 /**
   * @brief  Callback function called by OpenAMP MW to notify message processing

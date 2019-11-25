@@ -27,7 +27,6 @@
 #include "openamp/open_amp.h"
 #include "openamp_conf.h"
 
-
 #define OPENAMP_send  rpmsg_send
 #define OPENAMP_destroy_ept rpmsg_destroy_ept
 
@@ -35,7 +34,7 @@
 int MX_OPENAMP_Init(int RPMsgRole, rpmsg_ns_bind_cb ns_bind_cb);
 
 /* Deinitialize the openamp framework*/
-void OPENAMP_DeInit();
+void OPENAMP_DeInit(void);
 
 /* Initialize the endpoint struct*/
 void OPENAMP_init_ept(struct rpmsg_endpoint *ept);

@@ -99,20 +99,19 @@ RPMSG_HDR_StatusTypeDef RPMSG_HDR_RegisterCallback(RPMSG_HDR_HandleTypeDef *hdr,
         RPMSG_HDR_CallbackIDTypeDef CallbackID,
         void (* pCallback)(RPMSG_HDR_HandleTypeDef *_hdr))
 {
-  VIRT_UART_StatusTypeDef status = VIRT_UART_OK;
 
   switch (CallbackID)
   {
   case RPMSG_HDR_RXCPLT_CB_ID :
     hdr->RxCpltCallback = pCallback;
+    return RPMSG_HDR_OK;
     break;
 
   default :
    /* Return error status */
-    status =  RPMSG_HDR_ERROR;
+	return  RPMSG_HDR_ERROR;
     break;
   }
-  return status;
 
   return RPMSG_HDR_OK;
 }

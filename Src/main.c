@@ -1,52 +1,40 @@
+/* USER CODE BEGIN Header */
 /**
   ******************************************************************************
-  * @file    main.c
-  * @author  MCD Application Team
-  * @brief   This example describes how to configure and use OpenAMP MW and
-  *          the STM32MP1xx VIRTUAL API.
+  * @file           : main.c
+  * @brief          : Main program body
   ******************************************************************************
   * @attention
   *
-  * <h2><center>&copy; COPYRIGHT(c) 2016 STMicroelectronics</center></h2>
+  * <h2><center>&copy; Copyright (c) 2019 STMicroelectronics.
+  * All rights reserved.</center></h2>
   *
-  * Redistribution and use in source and binary forms, with or without modification,
-  * are permitted provided that the following conditions are met:
-  *   1. Redistributions of source code must retain the above copyright notice,
-  *      this list of conditions and the following disclaimer.
-  *   2. Redistributions in binary form must reproduce the above copyright notice,
-  *      this list of conditions and the following disclaimer in the documentation
-  *      and/or other materials provided with the distribution.
-  *   3. Neither the name of STMicroelectronics nor the names of its contributors
-  *      may be used to endorse or promote products derived from this software
-  *      without specific prior written permission.
-  *
-  * THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS"
-  * AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
-  * IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE
-  * DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDER OR CONTRIBUTORS BE LIABLE
-  * FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL
-  * DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR
-  * SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER
-  * CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY,
-  * OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
-  * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+  * This software component is licensed by ST under Ultimate Liberty license
+  * SLA0044, the "License"; You may not use this file except in compliance with
+  * the License. You may obtain a copy of the License at:
+  *                             www.st.com/SLA0044
   *
   ******************************************************************************
   */
+/* USER CODE END Header */
 
 /* Includes ------------------------------------------------------------------*/
-#include "lock_resource.h"
 #include "main.h"
+#include "openamp.h"
+#include "virt_uart.h"
+#include "virt_uart.h"
+#include "openamp_log.h"
+#include "rpmsg_hdr.h"
 
-/** @addtogroup STM32MP1xx_HAL_Examples
-  * @{
-  */
+/* Private includes ----------------------------------------------------------*/
+/* USER CODE BEGIN Includes */
 
-/** @addtogroup OpenAMP_TTY_echo_wakeup
-  * @{
-  */
+/* USER CODE END Includes */
 
 /* Private typedef -----------------------------------------------------------*/
+/* USER CODE BEGIN PTD */
+#define COPRO_SYNC_SHUTDOWN_CHANNEL  IPCC_CHANNEL_3
+
 typedef enum {
     RISING,                 /*  0 */
     FALLING,                /*  1 */
@@ -74,13 +62,24 @@ typedef struct __HDR_DdrBuffTypeDef
 #define PRINTF_TIME 5
 #define SAMPLE_BUFF_LEN 992
 
+/* USER CODE END PTD */
+
+/* Private define ------------------------------------------------------------*/
+/* USER CODE BEGIN PD */
+/* USER CODE END PD */
 
 /* Private macro -------------------------------------------------------------*/
-/* Private variables ---------------------------------------------------------*/
-TIM_HandleTypeDef htim2;
-IPCC_HandleTypeDef hipcc;
-DMA_HandleTypeDef hdma_memtomem_dma2_stream1;
+/* USER CODE BEGIN PM */
 
+/* USER CODE END PM */
+
+/* Private variables ---------------------------------------------------------*/
+IPCC_HandleTypeDef hipcc;
+
+TIM_HandleTypeDef htim2;
+
+DMA_HandleTypeDef hdma_memtomem_dma2_stream1;
+/* USER CODE BEGIN PV */
 static struct rpmsg_virtio_device rvdev;
 RPMSG_HDR_HandleTypeDef hsdb0;
 VIRT_UART_HandleTypeDef huart0;
@@ -117,116 +116,47 @@ int8_t mSampRepet;
 
 char testStr[21] = {"B0Ad4200000L00100000"};
 
-/* Private functions ---------------------------------------------------------*/
+/* USER CODE END PV */
+
+/* Private function prototypes -----------------------------------------------*/
+static void MX_DMA_Init(void);
+static void MX_IPCC_Init(void);
+static void MX_TIM2_Init(void);
+int MX_OPENAMP_Init(int RPMsgRole, rpmsg_ns_bind_cb ns_bind_cb);
+/* USER CODE BEGIN PFP */
+
+/* USER CODE END PFP */
+
+/* Private user code ---------------------------------------------------------*/
+/* USER CODE BEGIN 0 */
+/**
+  * @brief  HW reset of used peripheral.
+  * @retval none
+  */
+void resetPeripherals() {
+    __HAL_RCC_TIM2_FORCE_RESET();
+    HAL_Delay(2);
+    __HAL_RCC_TIM2_RELEASE_RESET();
+}
 
 /**
-  * @brief  This function is executed in case of error occurrence.
-  * @param  None
-  * @retval None
+  * @brief  CallBack function which will be called when firmware will be stopped by Android application.
+  * @retval none
   */
-void Error_Handler(void)
+void CoproSync_ShutdownCb(IPCC_HandleTypeDef * hipcc, uint32_t ChannelIndex, IPCC_CHANNELDirTypeDef ChannelDir)
 {
-    /* User may add here some code to deal with this error */
-    //log_err("OOOps: file %s, line %d\n", __FILE__, __LINE__);
-    sprintf(mUartBuffTx, "OOOps: Error_Handler\n");
-    VIRT_UART_Transmit(&huart0, (uint8_t*)mUartBuffTx, strlen(mUartBuffTx));
+  /* Deinit the peripherals */
+    //TIM2
+    __HAL_RCC_TIM2_CLK_DISABLE();
+    HAL_NVIC_DisableIRQ(TIM2_IRQn);
+    HAL_NVIC_DisableIRQ(TIM2_IRQn);
 
-    while(1);
+    __HAL_RCC_TIM2_CLK_DISABLE();
+  // reset all used peripherals
+    resetPeripherals();
 
-}
-
-static void MX_IPCC_Init(void)
-{
-
-  hipcc.Instance = IPCC;
-  if (HAL_IPCC_Init(&hipcc) != HAL_OK)
-  {
-     Error_Handler();
-  }
-}
-
-static void MX_GPIO_Init(void)
-{
-    /* GPIO Ports Clock Enable */
-    __HAL_RCC_GPIOE_CLK_ENABLE();
-
-    GPIO_InitTypeDef GPIO_InitStruct;
-    /*Configure GPIO pins as input */
-    GPIO_InitStruct.Pin = GPIO_PIN_8 | GPIO_PIN_9 | GPIO_PIN_10 | GPIO_PIN_11 | GPIO_PIN_12;
-    GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_VERY_HIGH;
-    GPIO_InitStruct.Mode = GPIO_MODE_INPUT;
-    GPIO_InitStruct.Pull = GPIO_NOPULL;
-    GPIO_InitStruct.Alternate = 0;
-    PERIPH_LOCK(GPIOE);
-    HAL_GPIO_Init(GPIOE, &GPIO_InitStruct);
-    PERIPH_UNLOCK(GPIOE);
-
-    /*Configure GPIO pin as ouput => EXTI timing measurement*/
-    HAL_GPIO_WritePin(GPIOE, GPIO_PIN_7, GPIO_PIN_RESET);
-    GPIO_InitStruct.Pin = GPIO_PIN_7;
-    GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_VERY_HIGH;
-    GPIO_InitStruct.Mode = GPIO_MODE_OUTPUT_PP;
-    GPIO_InitStruct.Pull = GPIO_NOPULL;
-    GPIO_InitStruct.Alternate = 0;
-    PERIPH_LOCK(GPIOE);
-    HAL_GPIO_Init(GPIOE, &GPIO_InitStruct);
-    PERIPH_UNLOCK(GPIOE);
-    Log("MX_GPIO_Init GPIOE MODER=%lu\n", GPIOE->MODER);
-}
-
-/* TIM6 init function */
-static void MX_TIM2_Init(void)
-{
-
-  htim2.Instance = TIM2;
-  htim2.Init.Prescaler = 0;
-  htim2.Init.CounterMode = TIM_COUNTERMODE_UP;
-  htim2.Init.Period = 16;   // 80ns => 12MHz
-  HAL_TIM_Base_Init(&htim2);
-
-#ifdef DMA_SRAM
-  TIM_MasterConfigTypeDef   sMasterConfig;
-  /* Configure TIMx as master & use the UPDATE event as Trigger Output (TRGO) */
-  sMasterConfig.MasterOutputTrigger = TIM_TRGO_UPDATE;
-  sMasterConfig.MasterSlaveMode     = TIM_MASTERSLAVEMODE_ENABLE;
-  if ( HAL_TIMEx_MasterConfigSynchronization(&htim2, &sMasterConfig) != HAL_OK)
-  {
-    /* Configuration Error */
-    Error_Handler();
-  }
-#endif
-}
-
-static void MX_DMA_Init(void)
-{
-  /* DMA controller clock enable */
-  __HAL_RCC_DMA2_CLK_ENABLE();
-  __HAL_RCC_DMAMUX_CLK_ENABLE();
-
-  /* Configure DMA request hdma_memtomem_dma2_stream1 on DMA2_Stream0 */
-  hdma_memtomem_dma2_stream1.Instance = DMA2_Stream1;
-  hdma_memtomem_dma2_stream1.Init.Request = DMA_REQUEST_MEM2MEM;
-  hdma_memtomem_dma2_stream1.Init.Direction = DMA_MEMORY_TO_MEMORY;
-  hdma_memtomem_dma2_stream1.Init.PeriphInc = DMA_PINC_ENABLE;
-  hdma_memtomem_dma2_stream1.Init.MemInc = DMA_MINC_ENABLE;
-  hdma_memtomem_dma2_stream1.Init.PeriphDataAlignment = DMA_PDATAALIGN_WORD;
-  hdma_memtomem_dma2_stream1.Init.MemDataAlignment = DMA_MDATAALIGN_WORD;
-  hdma_memtomem_dma2_stream1.Init.Mode = DMA_NORMAL;
-  hdma_memtomem_dma2_stream1.Init.Priority = DMA_PRIORITY_LOW;
-  hdma_memtomem_dma2_stream1.Init.FIFOMode = DMA_FIFOMODE_ENABLE;
-  hdma_memtomem_dma2_stream1.Init.FIFOThreshold = DMA_FIFO_THRESHOLD_FULL;
-  hdma_memtomem_dma2_stream1.Init.MemBurst = DMA_MBURST_INC4;
-  hdma_memtomem_dma2_stream1.Init.PeriphBurst = DMA_PBURST_INC4;
-  if (HAL_DMA_Init(&hdma_memtomem_dma2_stream1) != HAL_OK)
-  {
-    Error_Handler();
-  }
-
-  /* DMA interrupt init */
-  /* DMA2_Stream0_IRQn interrupt configuration */
-  HAL_NVIC_SetPriority(DMA2_Stream1_IRQn, 1, 0);
-  HAL_NVIC_EnableIRQ(DMA2_Stream1_IRQn);
-
+  /* When ready, notify the remote processor that we can be shut down */
+  HAL_IPCC_NotifyCPU(hipcc, ChannelIndex, IPCC_CHANNEL_DIR_RX);
 }
 
 void VIRT_UART0_RxCpltCallback(VIRT_UART_HandleTypeDef *huart)
@@ -249,7 +179,6 @@ void SDB0_RxCpltCallback(RPMSG_HDR_HandleTypeDef *huart)
     SDB0ChannelBuffRx[SDB0ChannelRxSize] = 0;   // insure end of String
     sprintf(mUartBuffTx, "SDB0_RxCpltCallback: %s\n", SDB0ChannelBuffRx);
     VIRT_UART_Transmit(&huart0, (uint8_t*)mUartBuffTx, strlen(mUartBuffTx));
-    //Log("SDB0_RxCpltCallback: %s\n", SDB0ChannelBuffRx);
     SDB0RxMsg = SET;
 }
 
@@ -259,7 +188,6 @@ static void TransferCompleteDDR(DMA_HandleTypeDef *DmaHandle)
     mRollingCompSampCount += SAMP_SRAM_PACKET_SIZE;
     if ((mTotalCompSampCount % SAMP_DDR_BUFFER_SIZE) == 0) {
         // time to change DDR buffer and send MSG to Linux
-        //sprintf(mSdbBuffTx, "Buffer@%dL%08x", mArrayDdrBuffIndex, SAMP_DDR_BUFFER_SIZE);
         //sprintf(mSdbBuffTx, "B%dL%08x", mArrayDdrBuffIndex, SAMP_DDR_BUFFER_SIZE);
         //RPMSG_HDR_Transmit(&hsdb0, (uint8_t*)mSdbBuffTx, strlen(mSdbBuffTx));
         sprintf(mUartBuffTx, "DMA2DDR-B%dL%08x", mArrayDdrBuffIndex, SAMP_DDR_BUFFER_SIZE);
@@ -352,7 +280,7 @@ void TIM2_IRQHandler(void)
 {
   __HAL_TIM_CLEAR_IT(&htim2, TIM_IT_UPDATE);
   HAL_GPIO_WritePin(GPIOE, GPIO_PIN_7, GPIO_PIN_SET);   // IRQ measurement thanks to GPIO management
-  volatile uint32_t portE = (LA_0_GPIO_PORT->IDR >> 8) & 0x0000001F;  // get portE and shift right by 8 bits, then keep last 5 bits
+  volatile uint32_t portE = (LA0_INT_GPIO_Port->IDR >> 8) & 0x0000001F;  // get portE and shift right by 8 bits, then keep last 5 bits
 
   if (mLastSamp != 0xFF) {  // needed to start the algo correctly
       if (mLastSamp == (uint8_t)portE) {
@@ -414,115 +342,59 @@ uint8_t treatRxCommand2() {
     } else if (VirtUart0ChannelBuffRx[0] == 'E') {
         // exit requested
         fStopRequested = SET;
+    } else if (VirtUart0ChannelBuffRx[0] == 'r') {
+    	  sprintf(mUartBuffTx, "CM4 : mMCUfreq=%u mTIM2freq=%u\n",
+    	          (unsigned int)mMCUfreq, (unsigned int)mTIM2freq);
+    	  VIRT_UART_Transmit(&huart0, (uint8_t*)mUartBuffTx, strlen(mUartBuffTx));
+
+    	  sprintf(mUartBuffTx, "CM4 : boot successful with STM32Cube FW version: v%ld.%ld.%ld \n",
+    	                                            ((HAL_GetHalVersion() >> 24) & 0x000000FF),
+    	                                            ((HAL_GetHalVersion() >> 16) & 0x000000FF),
+    	                                           ((HAL_GetHalVersion() >> 8) & 0x000000FF));
+    	  VIRT_UART_Transmit(&huart0, (uint8_t*)mUartBuffTx, strlen(mUartBuffTx));
     } else {
-        sprintf(mUartBuffTx, "treatRxCommand2 ERROR wrong frequency command:%c instead of: S\n",
+        sprintf(mUartBuffTx, "CM4 : treatRxCommand2 ERROR wrong frequency command:%c instead of: S\n",
                 VirtUart0ChannelBuffRx[0]);
         VIRT_UART_Transmit(&huart0, (uint8_t*)mUartBuffTx, strlen(mUartBuffTx));
     }
     return false;
 }
 
-/*
-void treatSDBEvent() {
-    uint32_t addr=0, size=0;
-    // example command: B0AxxxxxxxxLyyyyyyyy => Buff0 @:xx..x Length:yy..y
-    if (SDB0ChannelBuffRx[0] != 'B') {
-        Log("treatSDBEvent ERROR wrong buffer command:%c\n", SDB0ChannelBuffRx[0]);
-    }
-    if (!((SDB0ChannelBuffRx[1] >= '0' && SDB0ChannelBuffRx[1] <= '3'))) {
-        Log("treatSDBEvent ERROR wrong buffer index:%c\n", SDB0ChannelBuffRx[1]);
-        return;
-    }
-    if (mArrayDdrBuffCount != (SDB0ChannelBuffRx[1] - '0')) {
-        Log("treatSDBEvent ERROR wrong buffer received index:%c awaited index:%d\n",
-                SDB0ChannelBuffRx[1], mArrayDdrBuffCount);
-        return;
-    }
-    if (SDB0ChannelBuffRx[2] != 'A') {
-        Log("treatSDBEvent ERROR wrong buffer address tag:%c instead of:A\n", SDB0ChannelBuffRx[1]);
-        return ;
-    }
-    if (SDB0ChannelBuffRx[11] != 'L') {
-        Log("treatSDBEvent ERROR wrong buffer length tag:%c instead of:L\n", SDB0ChannelBuffRx[11]);
-        return ;
-    }
-    for (int i=0; i<8; i++) {
-        if (!((SDB0ChannelBuffRx[3+i] >= '0' && SDB0ChannelBuffRx[3+i] <= '9') || (SDB0ChannelBuffRx[3+i] >= 'a' && SDB0ChannelBuffRx[3+i] <= 'f'))) {
-            Log("treatSDBEvent ERROR wrong address digit:%c at offset:%d\n", SDB0ChannelBuffRx[3+i], 3+i);
-            return ;
-        } else {
-            addr <<=4;
-            if ((SDB0ChannelBuffRx[3+i] >= '0' && SDB0ChannelBuffRx[3+i] <= '9')) {
-                addr |= (SDB0ChannelBuffRx[3+i] - '0');
-            } else {
-                addr |= (SDB0ChannelBuffRx[3+i] - 'a' + 10);
-            }
-        }
-        if (!((SDB0ChannelBuffRx[12+i] >= '0' && SDB0ChannelBuffRx[12+i] <= '9') || (SDB0ChannelBuffRx[12+i] >= 'a' && SDB0ChannelBuffRx[12+i] <= 'f'))) {
-            Log("treatSDBEvent ERROR wrong length digit:%c at offset:%d\n", SDB0ChannelBuffRx[12+i], 12+i);
-            return ;
-        } else {
-            size <<=4;
-            if ((SDB0ChannelBuffRx[12+i] >= '0' && SDB0ChannelBuffRx[12+i] <= '9')) {
-                size |= (SDB0ChannelBuffRx[12+i] - '0');
-            } else {
-                size |= (SDB0ChannelBuffRx[12+i] - 'a' + 10);
-            }
-        }
-    }
-    // save DDR buff @ and size
-    mArrayDdrBuff[mArrayDdrBuffCount].physAddr = addr;
-    mArrayDdrBuff[mArrayDdrBuffCount].physSize = size;
-    Log("treatSDBEvent OK physAddr=%x physSize=%x mArrayDdrBuffCount=%d\n",
-            mArrayDdrBuff[mArrayDdrBuffCount].physAddr,
-            mArrayDdrBuff[mArrayDdrBuffCount].physSize,
-            mArrayDdrBuffCount);
-    mArrayDdrBuffCount++;
-}
-*/
 void treatSDBEvent() {
     // example command: B0AxxxxxxxxLyyyyyyyy => Buff0 @:xx..x Length:yy..y
     if (SDB0ChannelBuffRx[0] != 'B') {
-        //Log("treatSDBEvent ERROR wrong buffer command:%c\n", SDB0ChannelBuffRx[0]);
-        sprintf(mUartBuffTx, "treatSDBEvent ERROR wrong buffer command:%c\n", SDB0ChannelBuffRx[0]);
+        sprintf(mUartBuffTx, "CM4 : treatSDBEvent ERROR wrong buffer command:%c\n", SDB0ChannelBuffRx[0]);
         VIRT_UART_Transmit(&huart0, (uint8_t*)mUartBuffTx, strlen(mUartBuffTx));
     }
     if (!((SDB0ChannelBuffRx[1] >= '0' && SDB0ChannelBuffRx[1] <= '3'))) {
-        //Log("treatSDBEvent ERROR wrong buffer index:%c\n", SDB0ChannelBuffRx[1]);
         sprintf(mUartBuffTx, "treatSDBEvent ERROR wrong buffer index:%c\n", SDB0ChannelBuffRx[1]);
         VIRT_UART_Transmit(&huart0, (uint8_t*)mUartBuffTx, strlen(mUartBuffTx));
         return;
     }
     if (mArrayDdrBuffCount != (SDB0ChannelBuffRx[1] - '0')) {
-        //Log("treatSDBEvent ERROR wrong buffer received index:%c awaited index:%d\n",
-        //        SDB0ChannelBuffRx[1], mArrayDdrBuffCount);
-        sprintf(mUartBuffTx, "treatSDBEvent ERROR wrong buffer received index:%c awaited index:%d\n",
+        sprintf(mUartBuffTx, "CM4 : treatSDBEvent ERROR wrong buffer received index:%c awaited index:%d\n",
                 SDB0ChannelBuffRx[1], mArrayDdrBuffCount);
         VIRT_UART_Transmit(&huart0, (uint8_t*)mUartBuffTx, strlen(mUartBuffTx));
         return;
     }
     if (SDB0ChannelBuffRx[2] != 'A') {
-        //Log("treatSDBEvent ERROR wrong buffer address tag:%c instead of:A\n", SDB0ChannelBuffRx[1]);
-        sprintf(mUartBuffTx, "treatSDBEvent ERROR wrong buffer address tag:%c instead of:A\n", SDB0ChannelBuffRx[1]);
+        sprintf(mUartBuffTx, "CM4 : treatSDBEvent ERROR wrong buffer address tag:%c instead of:A\n", SDB0ChannelBuffRx[1]);
         VIRT_UART_Transmit(&huart0, (uint8_t*)mUartBuffTx, strlen(mUartBuffTx));
         return ;
     }
     if (SDB0ChannelBuffRx[11] != 'L') {
-        //Log("treatSDBEvent ERROR wrong buffer length tag:%c instead of:L\n", SDB0ChannelBuffRx[11]);
-        sprintf(mUartBuffTx, "treatSDBEvent ERROR wrong buffer length tag:%c instead of:L\n", SDB0ChannelBuffRx[11]);
+        sprintf(mUartBuffTx, "CM4 : treatSDBEvent ERROR wrong buffer length tag:%c instead of:L\n", SDB0ChannelBuffRx[11]);
         VIRT_UART_Transmit(&huart0, (uint8_t*)mUartBuffTx, strlen(mUartBuffTx));
         return ;
     }
     for (int i=0; i<8; i++) {
         if (!((SDB0ChannelBuffRx[3+i] >= '0' && SDB0ChannelBuffRx[3+i] <= '9') || (SDB0ChannelBuffRx[3+i] >= 'a' && SDB0ChannelBuffRx[3+i] <= 'f'))) {
-            //Log("treatSDBEvent ERROR wrong address digit:%c at offset:%d\n", SDB0ChannelBuffRx[3+i], 3+i);
-            sprintf(mUartBuffTx, "treatSDBEvent ERROR wrong address digit:%c at offset:%d\n", SDB0ChannelBuffRx[3+i], 3+i);
+            sprintf(mUartBuffTx, "CM4 : treatSDBEvent ERROR wrong address digit:%c at offset:%d\n", SDB0ChannelBuffRx[3+i], 3+i);
             VIRT_UART_Transmit(&huart0, (uint8_t*)mUartBuffTx, strlen(mUartBuffTx));
             return ;
         }
         if (!((SDB0ChannelBuffRx[12+i] >= '0' && SDB0ChannelBuffRx[12+i] <= '9') || (SDB0ChannelBuffRx[12+i] >= 'a' && SDB0ChannelBuffRx[12+i] <= 'f'))) {
-            //Log("treatSDBEvent ERROR wrong length digit:%c at offset:%d\n", SDB0ChannelBuffRx[12+i], 12+i);
-            sprintf(mUartBuffTx, "treatSDBEvent ERROR wrong length digit:%c at offset:%d\n", SDB0ChannelBuffRx[12+i], 12+i);
+            sprintf(mUartBuffTx, "CM4 : treatSDBEvent ERROR wrong length digit:%c at offset:%d\n", SDB0ChannelBuffRx[12+i], 12+i);
             VIRT_UART_Transmit(&huart0, (uint8_t*)mUartBuffTx, strlen(mUartBuffTx));
             return ;
         }
@@ -530,12 +402,7 @@ void treatSDBEvent() {
     // save DDR buff @ and size
     mArrayDdrBuff[mArrayDdrBuffCount].physAddr = (uint32_t)strtoll((char*)&SDB0ChannelBuffRx[3], NULL, 16);
     mArrayDdrBuff[mArrayDdrBuffCount].physSize = (uint32_t)strtoll((char*)&SDB0ChannelBuffRx[12], NULL, 16);
-    /*
-    Log("treatSDBEvent OK physAddr=0x%lx physSize=%ld mArrayDdrBuffCount=%d\n",
-            mArrayDdrBuff[mArrayDdrBuffCount].physAddr,
-            mArrayDdrBuff[mArrayDdrBuffCount].physSize,
-            mArrayDdrBuffCount);*/
-    sprintf(mUartBuffTx, "treatSDBEvent OK physAddr=0x%lx physSize=%ld mArrayDdrBuffCount=%d\n",
+    sprintf(mUartBuffTx, "CM4 : treatSDBEvent OK physAddr=0x%lx physSize=%ld mArrayDdrBuffCount=%d\n",
             mArrayDdrBuff[mArrayDdrBuffCount].physAddr,
             mArrayDdrBuff[mArrayDdrBuffCount].physSize,
             mArrayDdrBuffCount);
@@ -574,15 +441,15 @@ void LAStateMachine(void) {
               if (res == HAL_OK) {
                   HAL_TIM_Base_Start(&htim2);
                   __HAL_TIM_ENABLE_DMA(&htim2, TIM_DMA_UPDATE);
-                  sprintf(mUartBuffTx, "LAStateMachine starting...\n");
+                  sprintf(mUartBuffTx, "CM4 : LAStateMachine starting...\n");
                   VIRT_UART_Transmit(&huart0, (uint8_t*)mUartBuffTx, strlen(mUartBuffTx));
               } else {
-                  sprintf(mUartBuffTx, "LAStateMachine starting HAL_DMAEx_MultiBufferStart_IT errorCode=%ld\n", htim2.hdma[TIM_DMA_ID_UPDATE]->ErrorCode);
+                  sprintf(mUartBuffTx, "CM4 : LAStateMachine starting HAL_DMAEx_MultiBufferStart_IT errorCode=%ld\n", htim2.hdma[TIM_DMA_ID_UPDATE]->ErrorCode);
                   VIRT_UART_Transmit(&huart0, (uint8_t*)mUartBuffTx, strlen(mUartBuffTx));
               }
           } else {
               // should return an ERROR !!!
-              sprintf(mUartBuffTx, "LAStateMachine cmd ERROR mArrayDdrBuffCount=%d\n", mArrayDdrBuffCount);
+              sprintf(mUartBuffTx, "CM4 : LAStateMachine cmd ERROR mArrayDdrBuffCount=%d\n", mArrayDdrBuffCount);
               VIRT_UART_Transmit(&huart0, (uint8_t*)mUartBuffTx, strlen(mUartBuffTx));
           }
 
@@ -598,7 +465,7 @@ void LAStateMachine(void) {
                 mArrayDdrBuff[mArrayDdrBuffIndex].physAddr+mRollingCompSampCount, SAMP_SRAM_PACKET_SIZE) != HAL_OK)
         {
           /* Transfer Error */
-            sprintf(mUartBuffTx, "LAStateMachine, fDdrDma2Send0 SET => HAL_DMA_Start_IT error !!!\n");
+            sprintf(mUartBuffTx, "CM4 : LAStateMachine, fDdrDma2Send0 SET => HAL_DMA_Start_IT error !!!\n");
             VIRT_UART_Transmit(&huart0, (uint8_t*)mUartBuffTx, strlen(mUartBuffTx));
         }
     }
@@ -608,7 +475,7 @@ void LAStateMachine(void) {
                 mArrayDdrBuff[mArrayDdrBuffIndex].physAddr+mRollingCompSampCount, SAMP_SRAM_PACKET_SIZE) != HAL_OK)
         {
           /* Transfer Error */
-            sprintf(mUartBuffTx, "LAStateMachine, fDdrDma2Send1 SET => HAL_DMA_Start_IT error !!!\n");
+            sprintf(mUartBuffTx, "CM4 : LAStateMachine, fDdrDma2Send1 SET => HAL_DMA_Start_IT error !!!\n");
             VIRT_UART_Transmit(&huart0, (uint8_t*)mUartBuffTx, strlen(mUartBuffTx));
         }
 
@@ -632,7 +499,6 @@ void testing(void) {
     mPrevSampCount = SAMP_SRAM_PACKET_SIZE;   // to allow circular buffer management 1st time
     mTotalCompSampCount = 0;
 
-#ifdef DMA_SRAM
     HAL_StatusTypeDef res = HAL_DMAEx_MultiBufferStart_IT(htim2.hdma[TIM_DMA_ID_UPDATE], GPIOx_IDR,
             (uint32_t)&mSampBuff[0], (uint32_t)&mSampBuff[SAMP_SRAM_PACKET_SIZE], SAMP_SRAM_PACKET_SIZE);
     if (res == HAL_OK) {
@@ -642,58 +508,104 @@ void testing(void) {
     } else {
         Log("testing, HAL_DMAEx_MultiBufferStart_IT errorCode=%ld\n", htim2.hdma[TIM_DMA_ID_UPDATE]->ErrorCode);
     }
-#else
-    HAL_TIM_Base_Start_IT(&htim2);
-#endif
-    //strcpy(SDB0ChannelBuffRx, testStr);
-    //treatSDBEvent();
 
 }
 
-/****************************************************************************
- * @brief  Main program
- * @param  None
- * @retval None
- */
+static void MX_GPIO_Init(void)
+{
+    /* GPIO Ports Clock Enable */
+    __HAL_RCC_GPIOE_CLK_ENABLE();
+
+    GPIO_InitTypeDef GPIO_InitStruct;
+    /*Configure GPIO pins as input */
+    GPIO_InitStruct.Pin = GPIO_PIN_8 | GPIO_PIN_9 | GPIO_PIN_10 | GPIO_PIN_11 | GPIO_PIN_12;
+    GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_VERY_HIGH;
+    GPIO_InitStruct.Mode = GPIO_MODE_INPUT;
+    GPIO_InitStruct.Pull = GPIO_NOPULL;
+    GPIO_InitStruct.Alternate = 0;
+    //PERIPH_LOCK(GPIOE);
+    HAL_GPIO_Init(GPIOE, &GPIO_InitStruct);
+    //PERIPH_UNLOCK(GPIOE);
+
+    /*Configure GPIO pin as ouput => EXTI timing measurement*/
+    HAL_GPIO_WritePin(GPIOE, GPIO_PIN_7, GPIO_PIN_RESET);
+    GPIO_InitStruct.Pin = GPIO_PIN_7;
+    GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_VERY_HIGH;
+    GPIO_InitStruct.Mode = GPIO_MODE_OUTPUT_PP;
+    GPIO_InitStruct.Pull = GPIO_NOPULL;
+    GPIO_InitStruct.Alternate = 0;
+    //PERIPH_LOCK(GPIOE);
+    HAL_GPIO_Init(GPIOE, &GPIO_InitStruct);
+    //PERIPH_UNLOCK(GPIOE);
+    Log("CM4 : MX_GPIO_Init GPIOE MODER=%lu\n", GPIOE->MODER);
+}
+
+void _Error_Handler(char *file, int line)
+{
+  /* USER CODE BEGIN Error_Handler_Debug */
+  /* User can add his own implementation to report the HAL error return state */
+  while(1)
+  {
+  }
+  /* USER CODE END Error_Handler_Debug */
+}
+
+
+/* USER CODE END 0 */
+
+/**
+  * @brief  The application entry point.
+  * @retval int
+  */
 int main(void)
 {
-  //volatile uint8_t debug_loop = 0;    // needed to let M4 perform a loop until the debugger attaches
+  /* USER CODE BEGIN 1 */
 
-  /* Initialize HAL : systick*/
-  if (HAL_Init() != HAL_OK)
-    Error_Handler();
+  /* USER CODE END 1 */
+  
+
+  /* MCU Configuration--------------------------------------------------------*/
+
+  /* Reset of all peripherals, Initializes the Flash interface and the Systick. */
+  HAL_Init();
+
+  /* USER CODE BEGIN Init */
 
   /*HW semaphore Clock enable*/
   __HAL_RCC_HSEM_CLK_ENABLE();
 
-  /* Initialize all configured peripherals */
-  MX_GPIO_Init();
-  MX_TIM2_Init();
+  // Major difference with MCU, state of resources is not known => HW reset before initialization
+  resetPeripherals();
 
-#ifdef DMA_SRAM
+  /* USER CODE END Init */
+
+  /* IPCC initialisation */
+   MX_IPCC_Init();
+  /* OpenAmp initialisation ---------------------------------*/
+  MX_OPENAMP_Init(RPMSG_REMOTE, NULL);
+
+  /* USER CODE BEGIN SysInit */
+
+  /* USER CODE END SysInit */
+
+  /* Initialize all configured peripherals */
+  MX_DMA_Init();
+  MX_TIM2_Init();
+  /* USER CODE BEGIN 2 */
+  MX_GPIO_Init();
+
   htim2.hdma[TIM_DMA_ID_UPDATE]->XferCpltCallback = TransferCompleteSRAM;
   htim2.hdma[TIM_DMA_ID_UPDATE]->XferM1CpltCallback = TransferCompleteSRAM;
   htim2.hdma[TIM_DMA_ID_UPDATE]->XferErrorCallback = TransferErrorSRAM;
-#endif
 
-
-  MX_DMA_Init();
   HAL_DMA_RegisterCallback(&hdma_memtomem_dma2_stream1, HAL_DMA_XFER_CPLT_CB_ID, TransferCompleteDDR);
   HAL_DMA_RegisterCallback(&hdma_memtomem_dma2_stream1, HAL_DMA_XFER_ERROR_CB_ID, TransferErrorDDR);
 
-
-    /* Initialize OpenAMP framework
-   * It will create a remote device handler
-   * Then, It will be used to create new rpmsg channels
-   * used as virtual device like UART0 and UART1 in this example
-   * to communicate with the Master processor CPU1(CA7)
-   */
-
-  MX_IPCC_Init();
-  MX_OPENAMP_Init(RPMSG_REMOTE, NULL);
+  HAL_IPCC_ActivateNotification(&hipcc, COPRO_SYNC_SHUTDOWN_CHANNEL, IPCC_CHANNEL_DIR_RX,
+            CoproSync_ShutdownCb);
 
   /*
-   * Create Virtual UART device
+   * Create HDR device
    * defined by a rpmsg channel attached to the remote device
    */
   hsdb0.rvdev =  &rvdev;
@@ -708,9 +620,10 @@ int main(void)
    * defined by a rpmsg channel attached to the remote device
    */
   huart0.rvdev =  &rvdev;
-  log_info("Virtual UART0 OpenAMP-rpmsg channel creation\n");
+  log_info("Virtual UART0 OpenAMP-rpmsg channel creation\r\n");
   if (VIRT_UART_Init(&huart0) != VIRT_UART_OK) {
-    log_err("VIRT_UART_Init UART0 failed.\n");
+    log_err("VIRT_UART_Init UART0 failed.\r\n");
+    //_Error_Handler(__FILE__, __LINE__);
     Error_Handler();
   }
 
@@ -726,46 +639,155 @@ int main(void)
     Error_Handler();
   }
 
+  //mMCUfreq = HAL_RCCEx_GetSystemCoreClockFreq();
   mMCUfreq = HAL_RCC_GetMCUFreq();
   mTIM2freq = HAL_RCCEx_GetPeriphCLKFreq(RCC_PERIPHCLK_TIMG1);
-
-//  Log("mMCUfreq=%u mTIM2freq=%u\n",
-//          (unsigned int)mMCUfreq, (unsigned int)mTIM2freq);
-  sprintf(mUartBuffTx, "mMCUfreq=%u mTIM2freq=%u\n",
-          (unsigned int)mMCUfreq, (unsigned int)mTIM2freq);
-  VIRT_UART_Transmit(&huart0, (uint8_t*)mUartBuffTx, strlen(mUartBuffTx));
-
-
-  //Log("Cortex M4 boot successful with STM32Cube FW version: v%ld.%ld.%ld \n",
-  //                                          ((HAL_GetHalVersion() >> 24) & 0x000000FF),
-  //                                          ((HAL_GetHalVersion() >> 16) & 0x000000FF),
-  //                                          ((HAL_GetHalVersion() >> 8) & 0x000000FF));
-
-  sprintf(mUartBuffTx, "Cortex M4 boot successful with STM32Cube FW version: v%ld.%ld.%ld \n",
-                                            ((HAL_GetHalVersion() >> 24) & 0x000000FF),
-                                            ((HAL_GetHalVersion() >> 16) & 0x000000FF),
-                                           ((HAL_GetHalVersion() >> 8) & 0x000000FF));
-  VIRT_UART_Transmit(&huart0, (uint8_t*)mUartBuffTx, strlen(mUartBuffTx));
 
   //while (debug_loop == 0);
 
   //testing();
 
-  do {
+  /* USER CODE END 2 */
+
+  /* Infinite loop */
+  /* USER CODE BEGIN WHILE */
+  while (1)
+  {
       LAStateMachine();
-    } while(1);
+    /* USER CODE END WHILE */
 
-
-  return 0;
+    /* USER CODE BEGIN 3 */
+  }
+  /* USER CODE END 3 */
 }
 
-/*
- * Android command reception management
- *   UI state
- *   Buffer get
- */
-#ifdef  USE_FULL_ASSERT
+/**
+  * @brief IPCC Initialization Function
+  * @param None
+  * @retval None
+  */
+static void MX_IPCC_Init(void)
+{
 
+  /* USER CODE BEGIN IPCC_Init 0 */
+
+  /* USER CODE END IPCC_Init 0 */
+
+  /* USER CODE BEGIN IPCC_Init 1 */
+
+  /* USER CODE END IPCC_Init 1 */
+  hipcc.Instance = IPCC;
+  if (HAL_IPCC_Init(&hipcc) != HAL_OK)
+  {
+    Error_Handler();
+  }
+  /* USER CODE BEGIN IPCC_Init 2 */
+
+  /* USER CODE END IPCC_Init 2 */
+
+}
+
+/**
+  * @brief TIM2 Initialization Function
+  * @param None
+  * @retval None
+  */
+static void MX_TIM2_Init(void)
+{
+
+  /* USER CODE BEGIN TIM2_Init 0 */
+
+  /* USER CODE END TIM2_Init 0 */
+
+  TIM_MasterConfigTypeDef sMasterConfig = {0};
+
+  /* USER CODE BEGIN TIM2_Init 1 */
+
+  /* USER CODE END TIM2_Init 1 */
+  htim2.Instance = TIM2;
+  htim2.Init.Prescaler = 0;
+  htim2.Init.CounterMode = TIM_COUNTERMODE_UP;
+  htim2.Init.Period = 16;   // 80ns => 12MHz
+  //htim2.Init.ClockDivision = TIM_CLOCKDIVISION_DIV1;
+  //htim2.Init.AutoReloadPreload = TIM_AUTORELOAD_PRELOAD_DISABLE;
+  if (HAL_TIM_Base_Init(&htim2) != HAL_OK)
+  {
+    Error_Handler();
+  }
+
+  /* Configure TIMx as master & use the UPDATE event as Trigger Output (TRGO) */
+  sMasterConfig.MasterOutputTrigger = TIM_TRGO_UPDATE;
+  sMasterConfig.MasterSlaveMode     = TIM_MASTERSLAVEMODE_ENABLE;
+  if ( HAL_TIMEx_MasterConfigSynchronization(&htim2, &sMasterConfig) != HAL_OK)
+  {
+    /* Configuration Error */
+    Error_Handler();
+  }
+  /* USER CODE BEGIN TIM2_Init 2 */
+
+  /* USER CODE END TIM2_Init 2 */
+
+}
+
+/** 
+  * Enable DMA controller clock
+  * Configure DMA for memory to memory transfers
+  *   hdma_memtomem_dma2_stream0
+  */
+static void MX_DMA_Init(void) 
+{
+
+  /* DMA controller clock enable */
+  __HAL_RCC_DMAMUX_CLK_ENABLE();
+  __HAL_RCC_DMA2_CLK_ENABLE();
+
+  /* Configure DMA request hdma_memtomem_dma2_stream1 on DMA2_Stream0 */
+  hdma_memtomem_dma2_stream1.Instance = DMA2_Stream1;
+  hdma_memtomem_dma2_stream1.Init.Request = DMA_REQUEST_MEM2MEM;
+  hdma_memtomem_dma2_stream1.Init.Direction = DMA_MEMORY_TO_MEMORY;
+  hdma_memtomem_dma2_stream1.Init.PeriphInc = DMA_PINC_ENABLE;
+  hdma_memtomem_dma2_stream1.Init.MemInc = DMA_MINC_ENABLE;
+  hdma_memtomem_dma2_stream1.Init.PeriphDataAlignment = DMA_PDATAALIGN_WORD;
+  hdma_memtomem_dma2_stream1.Init.MemDataAlignment = DMA_MDATAALIGN_WORD;
+  hdma_memtomem_dma2_stream1.Init.Mode = DMA_NORMAL;
+  hdma_memtomem_dma2_stream1.Init.Priority = DMA_PRIORITY_LOW;
+  hdma_memtomem_dma2_stream1.Init.FIFOMode = DMA_FIFOMODE_ENABLE;
+  hdma_memtomem_dma2_stream1.Init.FIFOThreshold = DMA_FIFO_THRESHOLD_FULL;
+  hdma_memtomem_dma2_stream1.Init.MemBurst = DMA_MBURST_INC4;
+  hdma_memtomem_dma2_stream1.Init.PeriphBurst = DMA_PBURST_INC4;
+  if (HAL_DMA_Init(&hdma_memtomem_dma2_stream1) != HAL_OK)
+  {
+    Error_Handler();
+  }
+
+  /* USER CODE BEGIN 4 */
+  /* DMA interrupt init */
+  /* DMA2_Stream0_IRQn interrupt configuration */
+  HAL_NVIC_SetPriority(DMA2_Stream1_IRQn, 1, 0);
+  HAL_NVIC_EnableIRQ(DMA2_Stream1_IRQn);
+
+  /* USER CODE END 4 */
+
+}
+ 
+
+/**
+  * @brief  This function is executed in case of error occurrence.
+  * @retval None
+  */
+void Error_Handler(void)
+{
+  /* USER CODE BEGIN Error_Handler_Debug */
+  /* User can add his own implementation to report the HAL error return state */
+    sprintf(mUartBuffTx, "CM4 : OOOps: Error_Handler\n");
+    VIRT_UART_Transmit(&huart0, (uint8_t*)mUartBuffTx, strlen(mUartBuffTx));
+
+    while(1);
+
+  /* USER CODE END Error_Handler_Debug */
+}
+
+#ifdef  USE_FULL_ASSERT
 /**
   * @brief  Reports the name of the source file and the source line number
   *         where the assert_param error has occurred.
@@ -774,14 +796,12 @@ int main(void)
   * @retval None
   */
 void assert_failed(uint8_t *file, uint32_t line)
-{
+{ 
+  /* USER CODE BEGIN 6 */
   /* User can add his own implementation to report the file name and line number,
-     ex: printf("Wrong parameters value: file %s on line %d\n", file, line) */
-
-	log_err("OOOps: file %s, line %d\n", __FILE__, __LINE__);
-
-  /* Infinite loop */
-  while (1) {
-  }
+     tex: printf("Wrong parameters value: file %s on line %d\r\n", file, line) */
+  /* USER CODE END 6 */
 }
-#endif
+#endif /* USE_FULL_ASSERT */
+
+/************************ (C) COPYRIGHT STMicroelectronics *****END OF FILE****/

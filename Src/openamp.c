@@ -33,7 +33,6 @@ static struct shared_resource_table *rsc_table;
 static struct rpmsg_virtio_shm_pool shpool;
 static struct rpmsg_virtio_device rvdev;
 
-
 static metal_phys_addr_t shm_physmap;
 
 struct metal_device shm_device = {
@@ -86,7 +85,7 @@ static int OPENAMP_shmem_init(int RPMsgRole)
   }
 
   metal_io_init(&device->regions[1], rsc_table,
-               (metal_phys_addr_t *)rsc_table, rsc_size, -1, 0, NULL);
+               (metal_phys_addr_t *)rsc_table, rsc_size, -1U, 0, NULL);
 
   rsc_io = metal_device_io_region(device, 1);
   if (rsc_io == NULL) {

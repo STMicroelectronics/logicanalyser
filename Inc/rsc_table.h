@@ -22,9 +22,6 @@
 //#define __section_t(S)          __attribute__((__section__(#S)))
 //#define __resource              __section_t(.resource_table)
 
-
-
-
 /* Resource table for the given remote */
 struct shared_resource_table {
 	unsigned int version;
