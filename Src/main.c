@@ -188,10 +188,10 @@ static void TransferCompleteDDR(DMA_HandleTypeDef *DmaHandle)
     mRollingCompSampCount += SAMP_SRAM_PACKET_SIZE;
     if ((mTotalCompSampCount % SAMP_DDR_BUFFER_SIZE) == 0) {
         // time to change DDR buffer and send MSG to Linux
-        //sprintf(mSdbBuffTx, "B%dL%08x", mArrayDdrBuffIndex, SAMP_DDR_BUFFER_SIZE);
-        //RPMSG_HDR_Transmit(&hsdb0, (uint8_t*)mSdbBuffTx, strlen(mSdbBuffTx));
-        sprintf(mUartBuffTx, "DMA2DDR-B%dL%08x", mArrayDdrBuffIndex, SAMP_DDR_BUFFER_SIZE);
-        VIRT_UART_Transmit(&huart0, (uint8_t*)mUartBuffTx, strlen(mUartBuffTx));
+        sprintf(mSdbBuffTx, "B%dL%08x", mArrayDdrBuffIndex, SAMP_DDR_BUFFER_SIZE);
+        RPMSG_HDR_Transmit(&hsdb0, (uint8_t*)mSdbBuffTx, strlen(mSdbBuffTx));
+        //sprintf(mUartBuffTx, "DMA2DDR-B%dL%08x", mArrayDdrBuffIndex, SAMP_DDR_BUFFER_SIZE);
+        //VIRT_UART_Transmit(&huart0, (uint8_t*)mUartBuffTx, strlen(mUartBuffTx));
         mRollingCompSampCount = 0;
         mArrayDdrBuffIndex++;
         if (mArrayDdrBuffIndex == mArrayDdrBuffCount) {
