@@ -35,6 +35,24 @@
 /* USER CODE BEGIN PTD */
 #define COPRO_SYNC_SHUTDOWN_CHANNEL  IPCC_CHANNEL_3
 
+/*
+ * USE_COMPRESSION_IN_IRQ flag allows to perform the compression algo under IRQ
+ * This does not work when optimization flag -O0 is set, even when compression variables
+ * are put in volatile.
+ * USE_COMPRESSION_IN_IRQ is working fine when optimization flag -Og is set and compression variables
+ * are NOT put in volatile.
+ */
+//#define USE_COMPRESSION_IN_IRQ
+
+
+/*
+ * USE_COMPRESSION_IN_MAIN flag allows to perform the compression algo in main loop.
+ * This configuration works with optimisation flag either set to -O0, either set to -Og,
+ * only variables which are modified in IRQ context are set in volatile
+ *
+ */
+#define USE_COMPRESSION_IN_MAIN
+
 typedef enum {
     RISING,                 /*  0 */
     FALLING,                /*  1 */
@@ -93,6 +111,9 @@ char mUartBuffTx[512];
 __IO FlagStatus fDdrDma2Send0 = RESET;
 __IO FlagStatus fDdrDma2Send1 = RESET;
 __IO FlagStatus fStopRequested = RESET;
+volatile uint32_t mDmaSramCount = 0;
+volatile uint64_t mTotalCompSampCount=0;
+volatile uint32_t mRollingCompSampCount=0;
 
 uint8_t VirtUart0ChannelBuffRx[100];
 uint16_t VirtUart0ChannelRxSize = 0;
@@ -103,14 +124,12 @@ char mSdbBuffTx[512];
 volatile uint32_t mMCUfreq, mTIM2freq;
 uint32_t m_samp_freq;
 
-uint8_t mSampBuff[SAMP_SRAM_PACKET_SIZE * 2];   // use a circular buffer in SRAM
+volatile uint8_t mSampBuff[SAMP_SRAM_PACKET_SIZE * 2];   // use a circular buffer in SRAM
 uint8_t mSampBuffOut[SAMP_SRAM_PACKET_SIZE * 2];   // use a circular buffer in SRAM
-static HDR_DdrBuffTypeDef mArrayDdrBuff[MAX_DDR_BUFF];    // used to store DDR buff allocated by Linux driver
-static uint8_t mArrayDdrBuffCount = 0;
-static uint8_t mArrayDdrBuffIndex = 0;  // will vary from 0 to mArrayDdrBuffCount-1
-uint64_t mTotalCompSampCount=0;
-uint32_t mRollingCompSampCount=0;
-uint32_t mRawSampCount, mSampCount, mPrevSampCount;    // nb of compressed sample
+volatile static HDR_DdrBuffTypeDef mArrayDdrBuff[MAX_DDR_BUFF];    // used to store DDR buff allocated by Linux driver
+volatile uint8_t mArrayDdrBuffCount = 0;
+volatile uint8_t mArrayDdrBuffIndex = 0;  // will vary from 0 to mArrayDdrBuffCount-1
+uint32_t mSampCount;    // nb of compressed sample
 uint8_t mLastSamp;
 int8_t mSampRepet;
 
@@ -135,7 +154,7 @@ int MX_OPENAMP_Init(int RPMsgRole, rpmsg_ns_bind_cb ns_bind_cb);
   */
 void resetPeripherals() {
     __HAL_RCC_TIM2_FORCE_RESET();
-    HAL_Delay(2);
+    //HAL_Delay(2);		// involves an issue in ShutdownCb (timeout)
     __HAL_RCC_TIM2_RELEASE_RESET();
 }
 
@@ -146,17 +165,15 @@ void resetPeripherals() {
 void CoproSync_ShutdownCb(IPCC_HandleTypeDef * hipcc, uint32_t ChannelIndex, IPCC_CHANNELDirTypeDef ChannelDir)
 {
   /* Deinit the peripherals */
-    //TIM2
-    __HAL_RCC_TIM2_CLK_DISABLE();
-    HAL_NVIC_DisableIRQ(TIM2_IRQn);
-    HAL_NVIC_DisableIRQ(TIM2_IRQn);
 
-    __HAL_RCC_TIM2_CLK_DISABLE();
-  // reset all used peripherals
+    HAL_NVIC_DisableIRQ(DMA2_Stream0_IRQn);
+    HAL_NVIC_DisableIRQ(DMA2_Stream1_IRQn);
+
     resetPeripherals();
+    __HAL_RCC_TIM2_CLK_DISABLE();
 
-  /* When ready, notify the remote processor that we can be shut down */
-  HAL_IPCC_NotifyCPU(hipcc, ChannelIndex, IPCC_CHANNEL_DIR_RX);
+	  /* When ready, notify the remote processor that we can be shut down */
+	  HAL_IPCC_NotifyCPU(hipcc, ChannelIndex, IPCC_CHANNEL_DIR_RX);
 }
 
 void VIRT_UART0_RxCpltCallback(VIRT_UART_HandleTypeDef *huart)
@@ -165,8 +182,7 @@ void VIRT_UART0_RxCpltCallback(VIRT_UART_HandleTypeDef *huart)
     VirtUart0ChannelRxSize = huart->RxXferSize < 100? huart->RxXferSize : 99;
     memcpy(VirtUart0ChannelBuffRx, huart->pRxBuffPtr, VirtUart0ChannelRxSize);
     VirtUart0ChannelBuffRx[VirtUart0ChannelRxSize] = 0;   // insure end of String
-    //Log("VIRT_UART0_RxCpltCallback: %s\n", VirtUart0ChannelBuffRx);
-    sprintf(mUartBuffTx, "VIRT_UART0_RxCpltCallback: %s\n", VirtUart0ChannelBuffRx);
+    sprintf(mUartBuffTx, "CM4 : VIRT_UART0_RxCpltCallback: %s\n", VirtUart0ChannelBuffRx);
     VIRT_UART_Transmit(&huart0, (uint8_t*)mUartBuffTx, strlen(mUartBuffTx));
     VirtUart0RxMsg = SET;
 }
@@ -177,7 +193,7 @@ void SDB0_RxCpltCallback(RPMSG_HDR_HandleTypeDef *huart)
     SDB0ChannelRxSize = huart->RxXferSize < 100? huart->RxXferSize : 99;
     memcpy(SDB0ChannelBuffRx, huart->pRxBuffPtr, SDB0ChannelRxSize);
     SDB0ChannelBuffRx[SDB0ChannelRxSize] = 0;   // insure end of String
-    sprintf(mUartBuffTx, "SDB0_RxCpltCallback: %s\n", SDB0ChannelBuffRx);
+    sprintf(mUartBuffTx, "CM4 : SDB0_RxCpltCallback: %s\n", SDB0ChannelBuffRx);
     VIRT_UART_Transmit(&huart0, (uint8_t*)mUartBuffTx, strlen(mUartBuffTx));
     SDB0RxMsg = SET;
 }
@@ -197,20 +213,13 @@ static void TransferCompleteDDR(DMA_HandleTypeDef *DmaHandle)
         if (mArrayDdrBuffIndex == mArrayDdrBuffCount) {
             mArrayDdrBuffIndex = 0;
         }
-
-    //} else {
-        //sprintf(mUartBuffTx, "TransferCompleteDDR packet of 1024 bytes sent, mTotalCompSampCount=%d\n", mTotalCompSampCount);
-        //VIRT_UART_Transmit(&huart0, (uint8_t*)mUartBuffTx, strlen(mUartBuffTx));
     }
 }
 
 static void TransferCompleteSRAM(DMA_HandleTypeDef *DmaHandle)
 {
-    mRawSampCount += SAMP_SRAM_PACKET_SIZE;
-    //HAL_DMA_Abort_IT(htim2.hdma[TIM_DMA_ID_UPDATE]);
-    //HAL_TIM_Base_Stop(&htim2);
-
     HAL_GPIO_WritePin(GPIOE, GPIO_PIN_7, GPIO_PIN_SET);   // IRQ measurement thanks to GPIO management
+#ifdef USE_COMPRESSION_IN_IRQ
     for (int i=0; i<SAMP_SRAM_PACKET_SIZE; i++) {
         if (mLastSamp != 0xFF) {  // needed to start the algo correctly
             if (mLastSamp == mSampBuff[i]) {
@@ -240,25 +249,30 @@ static void TransferCompleteSRAM(DMA_HandleTypeDef *DmaHandle)
             mSampCount = 0;
         }
     }
+#else
+    if ((mDmaSramCount & 1) == 0) {
+    	// 1st buffer filled
+        fDdrDma2Send0 = SET;
+    } else {
+    	// 2nd buffer filled
+        fDdrDma2Send1 = SET;
+    }
+    mDmaSramCount++;
+#endif
     HAL_GPIO_WritePin(GPIOE, GPIO_PIN_7, GPIO_PIN_RESET);
-
-    //sprintf(mUartBuffTx, "DMA TransferCompleteSRAM mRawSampCount=%ld mSampCount=%ld\n", mRawSampCount, mSampCount);
-    //VIRT_UART_Transmit(&huart0, (uint8_t*)mUartBuffTx, strlen(mUartBuffTx));
 }
 
 static void TransferErrorDDR(DMA_HandleTypeDef *DmaHandle)
 {
     mDMAerror = SET;
-    //Log("DMA DDR TransferError CB !!!\n");
-    sprintf(mUartBuffTx, "DMA DDR TransferError CB !!!\n");
+    sprintf(mUartBuffTx, "CM4 : DMA DDR TransferError CB !!!\n");
     VIRT_UART_Transmit(&huart0, (uint8_t*)mUartBuffTx, strlen(mUartBuffTx));
 }
 
 static void TransferErrorSRAM(DMA_HandleTypeDef *DmaHandle)
 {
     mDMAerror = SET;
-    //Log("DMA SRAM TransferError CB !!!\n");
-    sprintf(mUartBuffTx, "DMA SRAM TransferError CB !!!\n");
+    sprintf(mUartBuffTx, "CM4 : DMA SRAM TransferError CB !!!\n");
     VIRT_UART_Transmit(&huart0, (uint8_t*)mUartBuffTx, strlen(mUartBuffTx));
 }
 
@@ -276,45 +290,12 @@ void DMA2_Stream1_IRQHandler(void)
   HAL_DMA_IRQHandler(&hdma_memtomem_dma2_stream1);
 }
 
-void TIM2_IRQHandler(void)
-{
-  __HAL_TIM_CLEAR_IT(&htim2, TIM_IT_UPDATE);
-  HAL_GPIO_WritePin(GPIOE, GPIO_PIN_7, GPIO_PIN_SET);   // IRQ measurement thanks to GPIO management
-  volatile uint32_t portE = (LA0_INT_GPIO_Port->IDR >> 8) & 0x0000001F;  // get portE and shift right by 8 bits, then keep last 5 bits
-
-  if (mLastSamp != 0xFF) {  // needed to start the algo correctly
-      if (mLastSamp == (uint8_t)portE) {
-          mSampRepet++;
-          if (mSampRepet >= 7) {
-              // max number of occurence hit => time to save value
-              mSampBuff[mSampCount++] = (mLastSamp | 0xE0);    // save data including repetition
-              mLastSamp = (uint8_t)portE;
-              mSampRepet = -1;   // don't know yet, what will be next one
-          }
-      } else {
-          // new value different of previous one => save previous
-          mSampBuff[mSampCount++] = (mLastSamp | ((mSampRepet-1) << 5));    // save data including repetition
-          mLastSamp = (uint8_t)portE;
-          mSampRepet = 0;   // 1 occurence seen
-      }
-  } else {
-      mLastSamp = (uint8_t)portE;
-      mSampRepet = 0;   // 0 means 1 occurence, 7 means 8 occurences
-  }
-  if (mSampCount >= (SAMP_SRAM_PACKET_SIZE*2)) {
-      mSampCount = 0;
-  }
-  HAL_GPIO_WritePin(GPIOE, GPIO_PIN_7, GPIO_PIN_RESET);
-}
-
 uint8_t treatRxCommand2() {
     // example command: S002M => Sample, rate 002MHz
     if (VirtUart0ChannelBuffRx[0] == 'S') {
         for (int i=0; i<3; i++) {
             if (VirtUart0ChannelBuffRx[1+i] < '0' || VirtUart0ChannelBuffRx[1+i] > '9') {
-                //Log("treatRxCommand2 ERROR wrong frequency digit:%c at offset:%d\n",
-                //        VirtUart0ChannelBuffRx[1+i], 1+i);
-                sprintf(mUartBuffTx, "treatRxCommand2 ERROR wrong frequency digit:%c at offset:%d\n",
+                sprintf(mUartBuffTx, "CM4 : treatRxCommand2 ERROR wrong frequency digit:%c at offset:%d\n",
                         VirtUart0ChannelBuffRx[1+i], 1+i);
                 VIRT_UART_Transmit(&huart0, (uint8_t*)mUartBuffTx, strlen(mUartBuffTx));
 
@@ -322,8 +303,7 @@ uint8_t treatRxCommand2() {
             }
         }
         if (VirtUart0ChannelBuffRx[4] != 'M' && VirtUart0ChannelBuffRx[4] != 'k' && VirtUart0ChannelBuffRx[4] != 'H') {
-            //Log("treatRxCommand2 ERROR wrong frequency unit:%c\n", VirtUart0ChannelBuffRx[4]);
-            sprintf(mUartBuffTx, "treatRxCommand2 ERROR wrong frequency unit:%c\n", VirtUart0ChannelBuffRx[4]);
+            sprintf(mUartBuffTx, "CM4 : treatRxCommand2 ERROR wrong frequency unit:%c\n", VirtUart0ChannelBuffRx[4]);
             VIRT_UART_Transmit(&huart0, (uint8_t*)mUartBuffTx, strlen(mUartBuffTx));
             return false;
         }
@@ -335,8 +315,7 @@ uint8_t treatRxCommand2() {
         } else if (VirtUart0ChannelBuffRx[4] == 'M') {
             m_samp_freq *= 1000000;
         }
-        //Log("treatRxCommand2 OK frequency=%ld\n", m_samp_freq);
-        sprintf(mUartBuffTx, "treatRxCommand2 OK frequency=%ld\n", m_samp_freq);
+        sprintf(mUartBuffTx, "CM4 : treatRxCommand2 OK frequency=%ld\n", m_samp_freq);
         VIRT_UART_Transmit(&huart0, (uint8_t*)mUartBuffTx, strlen(mUartBuffTx));
         return true;
     } else if (VirtUart0ChannelBuffRx[0] == 'E') {
@@ -367,7 +346,7 @@ void treatSDBEvent() {
         VIRT_UART_Transmit(&huart0, (uint8_t*)mUartBuffTx, strlen(mUartBuffTx));
     }
     if (!((SDB0ChannelBuffRx[1] >= '0' && SDB0ChannelBuffRx[1] <= '3'))) {
-        sprintf(mUartBuffTx, "treatSDBEvent ERROR wrong buffer index:%c\n", SDB0ChannelBuffRx[1]);
+        sprintf(mUartBuffTx, "CM4 : treatSDBEvent ERROR wrong buffer index:%c\n", SDB0ChannelBuffRx[1]);
         VIRT_UART_Transmit(&huart0, (uint8_t*)mUartBuffTx, strlen(mUartBuffTx));
         return;
     }
@@ -431,10 +410,9 @@ void LAStateMachine(void) {
               configureTimer(period);
               mArrayDdrBuffIndex = 0;
               mRollingCompSampCount = 0;
-              mRawSampCount = 0;
+              mDmaSramCount = 0;	// to know which SRAM buffer will be filled
               mSampCount = 0;
-              mLastSamp = 0xFF;   // to be sure that the 1st comparison will fail in TIM IRQ
-              mPrevSampCount = SAMP_SRAM_PACKET_SIZE;   // to allow circular buffer management 1st time
+              mLastSamp = 0xFF;   // to be sure that the 1st comparison will fail in compr. algo.
               mTotalCompSampCount = 0;
               HAL_StatusTypeDef res = HAL_DMAEx_MultiBufferStart_IT(htim2.hdma[TIM_DMA_ID_UPDATE], GPIOx_IDR,
                       (uint32_t)&mSampBuff[0], (uint32_t)&mSampBuff[SAMP_SRAM_PACKET_SIZE], SAMP_SRAM_PACKET_SIZE);
@@ -461,6 +439,7 @@ void LAStateMachine(void) {
     }
     if (fDdrDma2Send0) {
         fDdrDma2Send0 = RESET;
+#ifdef USE_COMPRESSION_IN_IRQ
         if (HAL_DMA_Start_IT(&hdma_memtomem_dma2_stream1, (uint32_t)&mSampBuffOut[0],
                 mArrayDdrBuff[mArrayDdrBuffIndex].physAddr+mRollingCompSampCount, SAMP_SRAM_PACKET_SIZE) != HAL_OK)
         {
@@ -468,16 +447,110 @@ void LAStateMachine(void) {
             sprintf(mUartBuffTx, "CM4 : LAStateMachine, fDdrDma2Send0 SET => HAL_DMA_Start_IT error !!!\n");
             VIRT_UART_Transmit(&huart0, (uint8_t*)mUartBuffTx, strlen(mUartBuffTx));
         }
+#else
+#ifdef USE_COMPRESSION_IN_MAIN
+		for (int i=0; i<SAMP_SRAM_PACKET_SIZE; i++) {
+			/*
+			 * mLastSamp saves the last sample value where:
+			 * - the 3 MSBs are set to 1 (compression algo has not yet been performed once
+			 * - the 3 MSBs are masked to 0 (compression algo has already been performed)
+			 * When Linux application request to start sampling, it sets mLastSamp to 0xFF (3 MSBs to 1)
+			 */
+			if (mLastSamp != 0xFF) {  // needed to start the algo correctly
+				if (mLastSamp == (mSampBuff[i] & 0x1F)) {
+					mSampRepet++;
+					if (mSampRepet >= 7) {
+						// max number of occurence hit => time to save value
+						mSampBuffOut[mSampCount++] = (mLastSamp | 0xE0);    // save data including repetition
+						mLastSamp = 0xFF;
+						mSampRepet = -1;   // don't know yet, what will be next one
+					}
+				} else {
+					// new value different of previous one => save previous
+					mSampBuffOut[mSampCount++] = (mLastSamp | (mSampRepet << 5));    // save data including repetition
+					mLastSamp = (mSampBuff[i] & 0x1F);
+					mSampRepet = 0;   // 1 occurence seen
+				}
+			} else {
+				mLastSamp = (mSampBuff[i] & 0x1F);
+				mSampRepet = 0;   // 0 means 1 occurence, 7 means 8 occurences
+			}
+			if (mSampCount == SAMP_SRAM_PACKET_SIZE) {
+				// time to transfer compressed buffer0 in DDR
+		        HAL_DMA_Start_IT(&hdma_memtomem_dma2_stream1, (uint32_t)&mSampBuffOut[0],
+		                mArrayDdrBuff[mArrayDdrBuffIndex].physAddr+mRollingCompSampCount, SAMP_SRAM_PACKET_SIZE);
+			} else if (mSampCount == (SAMP_SRAM_PACKET_SIZE*2)) {
+				// time to transfer compressed buffer1 in DDR
+		        HAL_DMA_Start_IT(&hdma_memtomem_dma2_stream1, (uint32_t)&mSampBuffOut[SAMP_SRAM_PACKET_SIZE],
+		                mArrayDdrBuff[mArrayDdrBuffIndex].physAddr+mRollingCompSampCount, SAMP_SRAM_PACKET_SIZE);
+				mSampCount = 0;
+			}
+		}
+#else
+    	if (HAL_DMA_Start_IT(&hdma_memtomem_dma2_stream1, (uint32_t)&mSampBuff[0],
+			mArrayDdrBuff[mArrayDdrBuffIndex].physAddr+mRollingCompSampCount, SAMP_SRAM_PACKET_SIZE) != HAL_OK)
+        {
+          /* Transfer Error */
+            sprintf(mUartBuffTx, "CM4 : LAStateMachine, fDdrDma2Send0 SET => HAL_DMA_Start_IT error !!!\n");
+            VIRT_UART_Transmit(&huart0, (uint8_t*)mUartBuffTx, strlen(mUartBuffTx));
+        }
+#endif
+
+#endif
     }
     if (fDdrDma2Send1) {
         fDdrDma2Send1 = RESET;
+#ifdef USE_COMPRESSION_IN_IRQ
         if (HAL_DMA_Start_IT(&hdma_memtomem_dma2_stream1, (uint32_t)&mSampBuffOut[SAMP_SRAM_PACKET_SIZE],
                 mArrayDdrBuff[mArrayDdrBuffIndex].physAddr+mRollingCompSampCount, SAMP_SRAM_PACKET_SIZE) != HAL_OK)
+        {
+          /* Transfer Error */
+            sprintf(mUartBuffTx, "CM4 : LAStateMachine, fDdrDma2Send0 SET => HAL_DMA_Start_IT error !!!\n");
+            VIRT_UART_Transmit(&huart0, (uint8_t*)mUartBuffTx, strlen(mUartBuffTx));
+        }
+#else
+#ifdef USE_COMPRESSION_IN_MAIN
+		for (int i=0; i<SAMP_SRAM_PACKET_SIZE; i++) {
+			if (mLastSamp != 0xFF) {  // needed to start the algo correctly
+				if (mLastSamp == mSampBuff[i]) {
+					mSampRepet++;
+					if (mSampRepet >= 7) {
+						// max number of occurence hit => time to save value
+						mSampBuffOut[mSampCount++] = (mLastSamp | 0xE0);    // save data including repetition
+						mLastSamp = 0xFF;
+						mSampRepet = -1;   // don't know yet, what will be next one
+					}
+				} else {
+					// new value different of previous one => save previous
+					mSampBuffOut[mSampCount++] = (mLastSamp | (mSampRepet << 5));    // save data including repetition
+					mLastSamp = mSampBuff[i] & 0x1F;
+					mSampRepet = 0;   // 1 occurence seen
+				}
+			} else {
+				mLastSamp = mSampBuff[i] & 0x1F;
+				mSampRepet = 0;   // 0 means 1 occurence, 7 means 8 occurences
+			}
+			if (mSampCount == SAMP_SRAM_PACKET_SIZE) {
+				// time to transfer compressed buffer0 in DDR
+		        HAL_DMA_Start_IT(&hdma_memtomem_dma2_stream1, (uint32_t)&mSampBuffOut[0],
+		                mArrayDdrBuff[mArrayDdrBuffIndex].physAddr+mRollingCompSampCount, SAMP_SRAM_PACKET_SIZE);
+			} else if (mSampCount == (SAMP_SRAM_PACKET_SIZE*2)) {
+				// time to transfer compressed buffer1 in DDR
+		        HAL_DMA_Start_IT(&hdma_memtomem_dma2_stream1, (uint32_t)&mSampBuffOut[SAMP_SRAM_PACKET_SIZE],
+		                mArrayDdrBuff[mArrayDdrBuffIndex].physAddr+mRollingCompSampCount, SAMP_SRAM_PACKET_SIZE);
+				mSampCount = 0;
+			}
+		}
+#else
+		if (HAL_DMA_Start_IT(&hdma_memtomem_dma2_stream1, (uint32_t)&mSampBuff[SAMP_SRAM_PACKET_SIZE],
+				mArrayDdrBuff[mArrayDdrBuffIndex].physAddr+mRollingCompSampCount, SAMP_SRAM_PACKET_SIZE) != HAL_OK)
         {
           /* Transfer Error */
             sprintf(mUartBuffTx, "CM4 : LAStateMachine, fDdrDma2Send1 SET => HAL_DMA_Start_IT error !!!\n");
             VIRT_UART_Transmit(&huart0, (uint8_t*)mUartBuffTx, strlen(mUartBuffTx));
         }
+#endif
+#endif
 
     }
     if (fStopRequested) {
@@ -487,28 +560,6 @@ void LAStateMachine(void) {
         HAL_TIM_Base_Stop(&htim2);
 
     }
-}
-
-void testing(void) {
-    m_samp_freq = 1000000;     // test @1MHz
-    uint32_t period = mTIM2freq / m_samp_freq;
-    configureTimer(period);
-    mRawSampCount = 0;
-    mSampCount = 0;
-    mLastSamp = 0xFF;   // to be sure that the 1st comparison will fail in TIM IRQ
-    mPrevSampCount = SAMP_SRAM_PACKET_SIZE;   // to allow circular buffer management 1st time
-    mTotalCompSampCount = 0;
-
-    HAL_StatusTypeDef res = HAL_DMAEx_MultiBufferStart_IT(htim2.hdma[TIM_DMA_ID_UPDATE], GPIOx_IDR,
-            (uint32_t)&mSampBuff[0], (uint32_t)&mSampBuff[SAMP_SRAM_PACKET_SIZE], SAMP_SRAM_PACKET_SIZE);
-    if (res == HAL_OK) {
-        HAL_TIM_Base_Start(&htim2);
-        __HAL_TIM_ENABLE_DMA(&htim2, TIM_DMA_UPDATE);
-        Log("testing...\n");
-    } else {
-        Log("testing, HAL_DMAEx_MultiBufferStart_IT errorCode=%ld\n", htim2.hdma[TIM_DMA_ID_UPDATE]->ErrorCode);
-    }
-
 }
 
 static void MX_GPIO_Init(void)
@@ -560,6 +611,7 @@ void _Error_Handler(char *file, int line)
 int main(void)
 {
   /* USER CODE BEGIN 1 */
+	//volatile uint8_t debug_loop = 0;
 
   /* USER CODE END 1 */
   
@@ -645,8 +697,6 @@ int main(void)
 
   //while (debug_loop == 0);
 
-  //testing();
-
   /* USER CODE END 2 */
 
   /* Infinite loop */
@@ -708,8 +758,6 @@ static void MX_TIM2_Init(void)
   htim2.Init.Prescaler = 0;
   htim2.Init.CounterMode = TIM_COUNTERMODE_UP;
   htim2.Init.Period = 16;   // 80ns => 12MHz
-  //htim2.Init.ClockDivision = TIM_CLOCKDIVISION_DIV1;
-  //htim2.Init.AutoReloadPreload = TIM_AUTORELOAD_PRELOAD_DISABLE;
   if (HAL_TIM_Base_Init(&htim2) != HAL_OK)
   {
     Error_Handler();

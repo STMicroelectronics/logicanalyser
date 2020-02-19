@@ -14,7 +14,7 @@
 				</extensions>
 			</storageModule>
 			<storageModule moduleId="cdtBuildSystem" version="4.0.0">
-				<configuration artifactExtension="elf" artifactName="${ProjName}03110" buildArtefactType="org.eclipse.cdt.build.core.buildArtefactType.exe" buildProperties="org.eclipse.cdt.build.core.buildArtefactType=org.eclipse.cdt.build.core.buildArtefactType.exe,org.eclipse.cdt.build.core.buildType=org.eclipse.cdt.build.core.buildType.debug" cleanCommand="rm -rf" description="" errorParsers="org.eclipse.cdt.core.GASErrorParser;org.eclipse.cdt.core.GmakeErrorParser;org.eclipse.cdt.core.GLDErrorParser;org.eclipse.cdt.core.CWDLocator;org.eclipse.cdt.core.GCCErrorParser" id="fr.ac6.managedbuild.config.gnu.cross.exe.debug.217485051.618988366.2044728111.1212826004" name="Debug" parent="fr.ac6.managedbuild.config.gnu.cross.exe.debug" postannouncebuildStep="Generating binary and Printing size information:" postbuildStep="arm-none-eabi-objcopy -O binary &quot;${BuildArtifactFileBaseName}.elf&quot; &quot;${BuildArtifactFileBaseName}.bin&quot; &amp;&amp; arm-none-eabi-size &quot;${BuildArtifactFileName}&quot;" preannouncebuildStep="" prebuildStep="">
+				<configuration artifactExtension="elf" artifactName="${ProjName}04120" buildArtefactType="org.eclipse.cdt.build.core.buildArtefactType.exe" buildProperties="org.eclipse.cdt.build.core.buildArtefactType=org.eclipse.cdt.build.core.buildArtefactType.exe,org.eclipse.cdt.build.core.buildType=org.eclipse.cdt.build.core.buildType.debug" cleanCommand="rm -rf" description="" errorParsers="org.eclipse.cdt.core.GASErrorParser;org.eclipse.cdt.core.GmakeErrorParser;org.eclipse.cdt.core.GLDErrorParser;org.eclipse.cdt.core.CWDLocator;org.eclipse.cdt.core.GCCErrorParser" id="fr.ac6.managedbuild.config.gnu.cross.exe.debug.217485051.618988366.2044728111.1212826004" name="Debug" parent="fr.ac6.managedbuild.config.gnu.cross.exe.debug" postannouncebuildStep="Generating binary and Printing size information:" postbuildStep="arm-none-eabi-objcopy -O binary &quot;${BuildArtifactFileBaseName}.elf&quot; &quot;${BuildArtifactFileBaseName}.bin&quot; &amp;&amp; arm-none-eabi-size &quot;${BuildArtifactFileName}&quot;" preannouncebuildStep="" prebuildStep="">
 					<folderInfo id="fr.ac6.managedbuild.config.gnu.cross.exe.debug.217485051.618988366.2044728111.1212826004." name="/" resourcePath="">
 						<toolChain errorParsers="" id="fr.ac6.managedbuild.toolchain.gnu.cross.exe.debug.2015802116" name="Ac6 STM32 MCU GCC" superClass="fr.ac6.managedbuild.toolchain.gnu.cross.exe.debug">
 							<option id="fr.ac6.managedbuild.option.gnu.cross.mcu.795961767" name="Mcu" superClass="fr.ac6.managedbuild.option.gnu.cross.mcu" useByScannerDiscovery="false" value="STM32MP157CACx" valueType="string"/>
@@ -29,18 +29,18 @@
 								</outputEntries>
 							</builder>
 							<tool command="gcc" commandLinePattern="${COMMAND} ${FLAGS} ${OUTPUT_FLAG} ${OUTPUT_PREFIX}${OUTPUT} ${INPUTS}" errorParsers="org.eclipse.cdt.core.GCCErrorParser" id="fr.ac6.managedbuild.tool.gnu.cross.c.compiler.979850953" name="MCU GCC Compiler" superClass="fr.ac6.managedbuild.tool.gnu.cross.c.compiler">
-								<option id="fr.ac6.managedbuild.gnu.c.compiler.option.optimization.level.1017638288" name="Optimization Level" superClass="fr.ac6.managedbuild.gnu.c.compiler.option.optimization.level" useByScannerDiscovery="false" value="fr.ac6.managedbuild.gnu.c.optimization.level.debug" valueType="enumerated"/>
+								<option id="fr.ac6.managedbuild.gnu.c.compiler.option.optimization.level.1017638288" name="Optimization Level" superClass="fr.ac6.managedbuild.gnu.c.compiler.option.optimization.level" useByScannerDiscovery="false" value="fr.ac6.managedbuild.gnu.c.optimization.level.none" valueType="enumerated"/>
 								<option id="gnu.c.compiler.option.debugging.level.1674798306" name="Debug Level" superClass="gnu.c.compiler.option.debugging.level" useByScannerDiscovery="false" value="gnu.c.debugging.level.max" valueType="enumerated"/>
 								<option id="gnu.c.compiler.option.include.paths.1932503304" name="Include paths (-I)" superClass="gnu.c.compiler.option.include.paths" useByScannerDiscovery="false" valueType="includePath">
 									<listOptionValue builtIn="false" value="../../../Inc/"/>
-									<listOptionValue builtIn="false" value="../../../../STM32Cube_FW_MP1_V1.1.0/Drivers/BSP/STM32MP15xx_DISCO"/>
-									<listOptionValue builtIn="false" value="../../../../STM32Cube_FW_MP1_V1.1.0/Drivers/CMSIS/Device/ST/STM32MP1xx/Include"/>
-									<listOptionValue builtIn="false" value="../../../../STM32Cube_FW_MP1_V1.1.0/Drivers/STM32MP1xx_HAL_Driver/Inc"/>
-									<listOptionValue builtIn="false" value="../../../../STM32Cube_FW_MP1_V1.1.0/Drivers/CMSIS/Include"/>
-									<listOptionValue builtIn="false" value="../../../../STM32Cube_FW_MP1_V1.1.0/Middlewares/Third_Party/OpenAMP/open-amp/lib/include"/>
-									<listOptionValue builtIn="false" value="../../../../STM32Cube_FW_MP1_V1.1.0/Middlewares/Third_Party/OpenAMP/libmetal/lib/include"/>
-									<listOptionValue builtIn="false" value="../../../../STM32Cube_FW_MP1_V1.1.0/Middlewares/Third_Party/OpenAMP/virtual_driver"/>
-									<listOptionValue builtIn="false" value="../../../../STM32Cube_FW_MP1_V1.1.0/Utilities/Log"/>
+									<listOptionValue builtIn="false" value="../../../../STM32Cube_FW_MP1_V1.2.0RC2/Drivers/BSP/STM32MP15xx_DISCO"/>
+									<listOptionValue builtIn="false" value="../../../../STM32Cube_FW_MP1_V1.2.0RC2/Drivers/CMSIS/Device/ST/STM32MP1xx/Include"/>
+									<listOptionValue builtIn="false" value="../../../../STM32Cube_FW_MP1_V1.2.0RC2/Drivers/STM32MP1xx_HAL_Driver/Inc"/>
+									<listOptionValue builtIn="false" value="../../../../STM32Cube_FW_MP1_V1.2.0RC2/Drivers/CMSIS/Include"/>
+									<listOptionValue builtIn="false" value="../../../../STM32Cube_FW_MP1_V1.2.0RC2/Middlewares/Third_Party/OpenAMP/open-amp/lib/include"/>
+									<listOptionValue builtIn="false" value="../../../../STM32Cube_FW_MP1_V1.2.0RC2/Middlewares/Third_Party/OpenAMP/libmetal/lib/include"/>
+									<listOptionValue builtIn="false" value="../../../../STM32Cube_FW_MP1_V1.2.0RC2/Middlewares/Third_Party/OpenAMP/virtual_driver"/>
+									<listOptionValue builtIn="false" value="../../../../STM32Cube_FW_MP1_V1.2.0RC2/Utilities/Log"/>
 								</option>
 								<option id="gnu.c.compiler.option.preprocessor.def.symbols.2016181033" name="Defined symbols (-D)" superClass="gnu.c.compiler.option.preprocessor.def.symbols" useByScannerDiscovery="false" valueType="definedSymbols">
 									<listOptionValue builtIn="false" value="STM32MP157Cxx"/>
@@ -52,6 +52,7 @@
 									<listOptionValue builtIn="false" value="CONFIG_SLAVE_MODE"/>
 									<listOptionValue builtIn="false" value="USE_BOARD_MB1272"/>
 									<listOptionValue builtIn="false" value="USE_HAL_DRIVER"/>
+									<listOptionValue builtIn="false" value="NO_ATOMIC_64_SUPPORT"/>
 								</option>
 								<option id="gnu.c.compiler.option.dialect.std.1890098235" name="Language standard" superClass="gnu.c.compiler.option.dialect.std" useByScannerDiscovery="true" value="gnu.c.compiler.dialect.default" valueType="enumerated"/>
 								<option id="fr.ac6.managedbuild.tool.gnu.cross.c.compiler.fdata.1254330900" name="Place the data in their own section (-fdata-sections)" superClass="fr.ac6.managedbuild.tool.gnu.cross.c.compiler.fdata" useByScannerDiscovery="false" value="true" valueType="boolean"/>
@@ -119,14 +120,14 @@
 								<option id="gnu.c.compiler.option.debugging.level.801713323" name="Debug Level" superClass="gnu.c.compiler.option.debugging.level" useByScannerDiscovery="false" value="gnu.c.debugging.level.none" valueType="enumerated"/>
 								<option id="gnu.c.compiler.option.include.paths.1218405796" name="Include paths (-I)" superClass="gnu.c.compiler.option.include.paths" useByScannerDiscovery="false" valueType="includePath">
 									<listOptionValue builtIn="false" value="../../../Inc/"/>
-									<listOptionValue builtIn="false" value="../../../../STM32Cube_FW_MP1_V1.1.0/Drivers/BSP/STM32MP15xx_DISCO"/>
-									<listOptionValue builtIn="false" value="../../../../STM32Cube_FW_MP1_V1.1.0/Drivers/CMSIS/Device/ST/STM32MP1xx/Include"/>
-									<listOptionValue builtIn="false" value="../../../../STM32Cube_FW_MP1_V1.1.0/Drivers/STM32MP1xx_HAL_Driver/Inc"/>
-									<listOptionValue builtIn="false" value="../../../../STM32Cube_FW_MP1_V1.1.0/Drivers/CMSIS/Include"/>
-									<listOptionValue builtIn="false" value="../../../../STM32Cube_FW_MP1_V1.1.0/Middlewares/Third_Party/OpenAMP/open-amp/lib/include"/>
-									<listOptionValue builtIn="false" value="../../../../STM32Cube_FW_MP1_V1.1.0/Middlewares/Third_Party/OpenAMP/libmetal/lib/include"/>
-									<listOptionValue builtIn="false" value="../../../../STM32Cube_FW_MP1_V1.1.0/Middlewares/Third_Party/OpenAMP/virtual_driver"/>
-									<listOptionValue builtIn="false" value="../../../../STM32Cube_FW_MP1_V1.1.0/Utilities/Log"/>
+									<listOptionValue builtIn="false" value="../../../../STM32Cube_FW_MP1_V1.2.0RC2/Drivers/BSP/STM32MP15xx_DISCO"/>
+									<listOptionValue builtIn="false" value="../../../../STM32Cube_FW_MP1_V1.2.0RC2/Drivers/CMSIS/Device/ST/STM32MP1xx/Include"/>
+									<listOptionValue builtIn="false" value="../../../../STM32Cube_FW_MP1_V1.2.0RC2/Drivers/STM32MP1xx_HAL_Driver/Inc"/>
+									<listOptionValue builtIn="false" value="../../../../STM32Cube_FW_MP1_V1.2.0RC2/Drivers/CMSIS/Include"/>
+									<listOptionValue builtIn="false" value="../../../../STM32Cube_FW_MP1_V1.2.0RC2/Middlewares/Third_Party/OpenAMP/open-amp/lib/include"/>
+									<listOptionValue builtIn="false" value="../../../../STM32Cube_FW_MP1_V1.2.0RC2/Middlewares/Third_Party/OpenAMP/libmetal/lib/include"/>
+									<listOptionValue builtIn="false" value="../../../../STM32Cube_FW_MP1_V1.2.0RC2/Middlewares/Third_Party/OpenAMP/virtual_driver"/>
+									<listOptionValue builtIn="false" value="../../../../STM32Cube_FW_MP1_V1.2.0RC2/Utilities/Log"/>
 								</option>
 								<option id="gnu.c.compiler.option.preprocessor.def.symbols.905054674" name="Defined symbols (-D)" superClass="gnu.c.compiler.option.preprocessor.def.symbols" useByScannerDiscovery="false" valueType="definedSymbols">
 									<listOptionValue builtIn="false" value="STM32MP15xx"/>
