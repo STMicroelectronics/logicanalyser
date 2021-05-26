@@ -23,6 +23,36 @@
 
 /* Private includes ----------------------------------------------------------*/
 /* USER CODE BEGIN Includes */
+/*
+ * This demonstration shows code examples of inter-core data exchanges
+ * For high data rate (more than 5MHz sampling), it relies on a SDB Linux driver
+ *  which provides DDR buffers allocations, and DDR DMA transfers
+ *
+ * For low data rate (less or equal to 5MHz sampling), it relies on VirtualUART
+ *  over RPMSG
+ *
+ * 2 virtualUARTS are created:
+ *  UART0 for A7 to M4 sampling commands (start/stop), and low data rate M4 to A7
+ *  UART1 for M4 trace
+ *
+ * LogicAnalyser sampling is done on PE8..14 available on Arduino connector of MB1272
+ *
+ * Compression algorithm is done on M4 side, on MSB on data
+ *
+ * Sampling is done in SRAM buffer thanks to TIM2 and DMA2
+ *  PE7..17 => DMA2 => SRAM_buff
+ *  DMA half and DMA full interrupts are used to avoid data over writing
+ *
+ * Compression is then performed by M4
+ *
+ * Finally compressed buffers are transfered to DDR by DMA or virtualUART
+ *
+ * In order to insure dynamic input data on PE8..12, these Ports are initialized as output
+ *  values are changed in TransferCompleteSRAM every 23 times
+ *
+ * On UI, refresh is done every new MB of compressed data
+ *
+ */
 #include "virt_uart.h"
 #include "virt_uart.h"
 #include "openamp_log.h"
@@ -32,24 +62,11 @@
 /* Private typedef -----------------------------------------------------------*/
 /* USER CODE BEGIN PTD */
 #define COPRO_SYNC_SHUTDOWN_CHANNEL  IPCC_CHANNEL_3
-
-/*
- * USE_COMPRESSION_IN_IRQ flag allows to perform the compression algo under IRQ
- * This does not work when optimization flag -O0 is set, even when compression variables
- * are put in volatile.
- * USE_COMPRESSION_IN_IRQ is working fine when optimization flag -Og is set and compression variables
- * are NOT put in volatile.
- */
-//#define USE_COMPRESSION_IN_IRQ
-
-
-/*
- * USE_COMPRESSION_IN_MAIN flag allows to perform the compression algo in main loop.
- * This configuration works with optimisation flag either set to -O0, either set to -Og,
- * only variables which are modified in IRQ context are set in volatile
- *
- */
-#define USE_COMPRESSION_IN_MAIN
+#define TRC_LA 1
+#define COMPRESS
+/* Use this switch to verify that data is changing even if no signal connected
+ * on PE8..PE12 */
+#define SET_DATA 1
 
 typedef enum {
     RISING,                 /*  0 */
@@ -58,23 +75,31 @@ typedef enum {
     NONE,                /*  1 */
 } sampling_edge_t;
 
+typedef enum {
+    INITIALIZING,               /*  0 */
+    DDR_BUFFERS_OK,             /*  1 */
+    SAMPLING_LOW_FREQ_BUFF1,    /*  2 */
+    SAMPLING_LOW_FREQ_BUFF2,    /*  3 */
+    SAMPLING_HIGH_FREQ_BUFF1,   /*  4 */
+    SAMPLING_HIGH_FREQ_BUFF2,   /*  5 */
+} Machine_State_t;
+
 typedef struct __HDR_DdrBuffTypeDef
 {
   uint32_t physAddr;
   uint32_t physSize;
 }HDR_DdrBuffTypeDef;
 
-#define SAMP_SRAM_PACKET_SIZE 1024
-#define SAMP_DDR_BUFFER_SIZE (1024*1024)
+#define SAMP_SRAM_RPMSG_PACKET_SIZE 	(256*2)
+#define SAMP_SRAM_DDR_DMA_PACKET_SIZE 	(1024*2)
+#define SAMP_DDR_BUFFER_SIZE 		(1024*1024)
 
 #define DMA_MEM_BUFF_SIZE   ((uint32_t) 512)      /* size in byte.. must be aligned with SDRAM word access..so must be a multiple of 4 ... must be less than DMA counter 65535  */
 
 #define MAX_DDR_BUFF 16
 
-//static char machine_state_str[5][13] = {"OFF", "READY", "WAITING_DECL", "SAMPLING", "SAMPLED"};
-//static char CMD_FINISHED[3] = "OK";
-
-#define GPIOx_IDR               (GPIOE_BASE + 0x10 + 1)     // portE bit 8..12
+#define GPIOx_IDR               (GPIOE_BASE + 0x10 + 1)     // portE Input bit 8..12
+#define GPIOx_ODR               (GPIOE_BASE + 0x14 + 1)     // portE Output bit 8..12
 #define PRINTF_TIME 5
 #define SAMPLE_BUFF_LEN 992
 
@@ -99,7 +124,7 @@ DMA_HandleTypeDef hdma_memtomem_dma2_stream1;
 /* USER CODE BEGIN PV */
 static struct rpmsg_virtio_device rvdev;
 RPMSG_HDR_HandleTypeDef hsdb0;
-VIRT_UART_HandleTypeDef huart0;
+VIRT_UART_HandleTypeDef huart0, huart1;
 
 __IO FlagStatus VirtUart0RxMsg = RESET;
 __IO FlagStatus SDB0RxMsg = RESET;
@@ -107,6 +132,7 @@ __IO FlagStatus VirtUart0OK = RESET;
 __IO FlagStatus fDmaBuffAvailable = RESET;
 __IO FlagStatus mDMAerror = RESET;
 char mUartBuffTx[512];
+char mUartBuffTx1[512];
 __IO FlagStatus fDdrDma2Send0 = RESET;
 __IO FlagStatus fDdrDma2Send1 = RESET;
 __IO FlagStatus fStopRequested = RESET;
@@ -123,15 +149,20 @@ char mSdbBuffTx[512];
 volatile uint32_t mMCUfreq, mTIM2freq;
 uint32_t m_samp_freq;
 
-volatile uint8_t mSampBuff[SAMP_SRAM_PACKET_SIZE * 2];   // use a circular buffer in SRAM
-uint8_t mSampBuffOut[SAMP_SRAM_PACKET_SIZE * 2];   // use a circular buffer in SRAM
-volatile static HDR_DdrBuffTypeDef mArrayDdrBuff[MAX_DDR_BUFF];    // used to store DDR buff allocated by Linux driver
+volatile uint8_t mSampBuff[SAMP_SRAM_DDR_DMA_PACKET_SIZE];   	// declare maximum size for DDR DMA
+uint8_t mSampBuffOut[SAMP_SRAM_DDR_DMA_PACKET_SIZE];   			// use a circular buffer in SRAM
+volatile static HDR_DdrBuffTypeDef mArrayDdrBuff[MAX_DDR_BUFF]; // used to store DDR buff allocated by Linux driver
 volatile uint8_t mArrayDdrBuffCount = 0;
-volatile uint8_t mArrayDdrBuffIndex = 0;  // will vary from 0 to mArrayDdrBuffCount-1
+volatile uint8_t mArrayDdrBuffIndex = 0;  						// will vary from 0 to mArrayDdrBuffCount-1
+uint16_t mSramPacketSize;
 uint32_t mSampCount;    // nb of compressed sample
 uint8_t mLastSamp;
 int8_t mSampRepet;
+#if SET_DATA
+uint8_t mPatternOut = 0, mPatterPreCounter = 0;
+#endif
 
+Machine_State_t mMachineState = INITIALIZING;
 char testStr[21] = {"B0Ad4200000L00100000"};
 
 /* USER CODE END PV */
@@ -178,38 +209,54 @@ void CoproSync_ShutdownCb(IPCC_HandleTypeDef * hipcc, uint32_t ChannelIndex, IPC
 	  HAL_IPCC_NotifyCPU(hipcc, ChannelIndex, IPCC_CHANNEL_DIR_RX);
 }
 
+/**
+  * @brief  CallBack function which will be called when UART0 data is received from A7.
+  * @retval none
+  */
 void VIRT_UART0_RxCpltCallback(VIRT_UART_HandleTypeDef *huart)
 {
     // copy received msg in a buffer
     VirtUart0ChannelRxSize = huart->RxXferSize < 100? huart->RxXferSize : 99;
     memcpy(VirtUart0ChannelBuffRx, huart->pRxBuffPtr, VirtUart0ChannelRxSize);
     VirtUart0ChannelBuffRx[VirtUart0ChannelRxSize] = 0;   // insure end of String
-    sprintf(mUartBuffTx, "CM4 : VIRT_UART0_RxCpltCallback: %s\n", VirtUart0ChannelBuffRx);
-    VIRT_UART_Transmit(&huart0, (uint8_t*)mUartBuffTx, strlen(mUartBuffTx));
+#if TRC_LA
+    sprintf(mUartBuffTx1, "CM4 : VIRT_UART0_RxCpltCallback: %s\n", VirtUart0ChannelBuffRx);
+    VIRT_UART_Transmit(&huart1, (uint8_t*)mUartBuffTx1, strlen(mUartBuffTx1));
+#endif
     VirtUart0RxMsg = SET;
 }
 
+/**
+  * @brief  CallBack function which will be called when a DDR buffers is allocated by Linux.
+  * @retval none
+  */
 void SDB0_RxCpltCallback(RPMSG_HDR_HandleTypeDef *huart)
 {
     // copy received msg in a buffer
     SDB0ChannelRxSize = huart->RxXferSize < 100? huart->RxXferSize : 99;
     memcpy(SDB0ChannelBuffRx, huart->pRxBuffPtr, SDB0ChannelRxSize);
     SDB0ChannelBuffRx[SDB0ChannelRxSize] = 0;   // insure end of String
-    sprintf(mUartBuffTx, "CM4 : SDB0_RxCpltCallback: %s\n", SDB0ChannelBuffRx);
-    VIRT_UART_Transmit(&huart0, (uint8_t*)mUartBuffTx, strlen(mUartBuffTx));
+#if TRC_LA
+    sprintf(mUartBuffTx1, "CM4 : SDB0_RxCpltCallback: %s\n", SDB0ChannelBuffRx);
+    VIRT_UART_Transmit(&huart1, (uint8_t*)mUartBuffTx1, strlen(mUartBuffTx1));
+#endif
     SDB0RxMsg = SET;
 }
 
+/**
+  * @brief  CallBack function which will be called when DDR buffer has been transferred.
+  * @retval none
+  */
 static void TransferCompleteDDR(DMA_HandleTypeDef *DmaHandle)
 {
-    mTotalCompSampCount += SAMP_SRAM_PACKET_SIZE;
-    mRollingCompSampCount += SAMP_SRAM_PACKET_SIZE;
+    mTotalCompSampCount += SAMP_SRAM_DDR_DMA_PACKET_SIZE/2;
+    mRollingCompSampCount += SAMP_SRAM_DDR_DMA_PACKET_SIZE/2;
     if ((mTotalCompSampCount % SAMP_DDR_BUFFER_SIZE) == 0) {
         // time to change DDR buffer and send MSG to Linux
         sprintf(mSdbBuffTx, "B%dL%08x", mArrayDdrBuffIndex, SAMP_DDR_BUFFER_SIZE);
         RPMSG_HDR_Transmit(&hsdb0, (uint8_t*)mSdbBuffTx, strlen(mSdbBuffTx));
         //sprintf(mUartBuffTx, "DMA2DDR-B%dL%08x", mArrayDdrBuffIndex, SAMP_DDR_BUFFER_SIZE);
-        //VIRT_UART_Transmit(&huart0, (uint8_t*)mUartBuffTx, strlen(mUartBuffTx));
+        //VIRT_UART_Transmit(&huart1, (uint8_t*)mUartBuffTx, strlen(mUartBuffTx));
         mRollingCompSampCount = 0;
         mArrayDdrBuffIndex++;
         if (mArrayDdrBuffIndex == mArrayDdrBuffCount) {
@@ -218,81 +265,90 @@ static void TransferCompleteDDR(DMA_HandleTypeDef *DmaHandle)
     }
 }
 
-static void TransferCompleteSRAM(DMA_HandleTypeDef *DmaHandle)
+/**
+  * @brief  CallBack function which will be called when 1st half SRAM buffer has been DMA filled.
+  * @retval none
+  */
+static void HalfTransferCompleteSRAM(DMA_HandleTypeDef *DmaHandle)
 {
-    HAL_GPIO_WritePin(GPIOE, GPIO_PIN_7, GPIO_PIN_SET);   // IRQ measurement thanks to GPIO management
-#ifdef USE_COMPRESSION_IN_IRQ
-    for (int i=0; i<SAMP_SRAM_PACKET_SIZE; i++) {
-        if (mLastSamp != 0xFF) {  // needed to start the algo correctly
-            if (mLastSamp == mSampBuff[i]) {
-                mSampRepet++;
-                if (mSampRepet >= 7) {
-                    // max number of occurence hit => time to save value
-                    mSampBuffOut[mSampCount++] = (mLastSamp | 0xE0);    // save data including repetition
-                    mLastSamp = 0xFF;
-                    mSampRepet = -1;   // don't know yet, what will be next one
-                }
-            } else {
-                // new value different of previous one => save previous
-                mSampBuffOut[mSampCount++] = (mLastSamp | (mSampRepet << 5));    // save data including repetition
-                mLastSamp = mSampBuff[i] & 0x1F;
-                mSampRepet = 0;   // 1 occurence seen
-            }
-        } else {
-            mLastSamp = mSampBuff[i] & 0x1F;
-            mSampRepet = 0;   // 0 means 1 occurence, 7 means 8 occurences
-        }
-        if (mSampCount == SAMP_SRAM_PACKET_SIZE) {
-            // time to transfer compressed buffer0 in DDR
-            fDdrDma2Send0 = SET;
-        } else if (mSampCount == (SAMP_SRAM_PACKET_SIZE*2)) {
-            // time to transfer compressed buffer1 in DDR
-            fDdrDma2Send1 = SET;
-            mSampCount = 0;
-        }
-    }
-#else
-    if ((mDmaSramCount & 1) == 0) {
-    	// 1st buffer filled
-        fDdrDma2Send0 = SET;
-    } else {
-    	// 2nd buffer filled
-        fDdrDma2Send1 = SET;
-    }
-    mDmaSramCount++;
-#endif
-    HAL_GPIO_WritePin(GPIOE, GPIO_PIN_7, GPIO_PIN_RESET);
+	// 1st half buffer filled
+	fDdrDma2Send0 = SET;
+	if (HAL_GPIO_ReadPin(GPIOE, LA_0_Pin)) {
+        HAL_GPIO_WritePin(GPIOE, LA_0_Pin, GPIO_PIN_SET);
+
+	}
 }
 
+/**
+  * @brief  CallBack function which will be called when 2nd half SRAM buffer has been DMA filled.
+  * @retval none
+  */
+static void TransferCompleteSRAM(DMA_HandleTypeDef *DmaHandle)
+{
+	// 2nd half buffer filled
+	fDdrDma2Send1 = SET;
+#if SET_DATA
+	mPatterPreCounter++;
+	if (mPatterPreCounter % 23 == 0) {
+		mPatternOut++;						// pattern to be put on PortE 8..12
+		if (mPatternOut > 31) {
+			mPatternOut = 0;
+		}
+		GPIOE->ODR &= 0xFFFFE0FF;			// 2nd byte of ODR is out target
+		GPIOE->ODR |= (mPatternOut << 8);
+	}
+#endif
+}
+
+/**
+  * @brief  CallBack function which will be called in case of DDR DMA error.
+  * @retval none
+  */
 static void TransferErrorDDR(DMA_HandleTypeDef *DmaHandle)
 {
     mDMAerror = SET;
-    sprintf(mUartBuffTx, "CM4 : DMA DDR TransferError CB !!!\n");
-    VIRT_UART_Transmit(&huart0, (uint8_t*)mUartBuffTx, strlen(mUartBuffTx));
+#if TRC_LA
+    sprintf(mUartBuffTx1, "CM4 : DMA DDR TransferError CB !!!\n");
+    VIRT_UART_Transmit(&huart1, (uint8_t*)mUartBuffTx1, strlen(mUartBuffTx1));
+#endif
 }
 
+/**
+  * @brief  CallBack function which will be called in case of SRAM DMA error.
+  * @retval none
+  */
 static void TransferErrorSRAM(DMA_HandleTypeDef *DmaHandle)
 {
     mDMAerror = SET;
-    sprintf(mUartBuffTx, "CM4 : DMA SRAM TransferError CB !!!\n");
-    VIRT_UART_Transmit(&huart0, (uint8_t*)mUartBuffTx, strlen(mUartBuffTx));
+#if TRC_LA
+    sprintf(mUartBuffTx1, "CM4 : DMA SRAM TransferError CB !!!\n");
+    VIRT_UART_Transmit(&huart1, (uint8_t*)mUartBuffTx1, strlen(mUartBuffTx1));
+#endif
 }
 
+/**
+  * @brief  Function which treats a command coming from A7.
+  * @retval boolean command OK or not
+  */
 uint8_t treatRxCommand2() {
     // example command: S002M => Sample, rate 002MHz
     if (VirtUart0ChannelBuffRx[0] == 'S') {
         for (int i=0; i<3; i++) {
             if (VirtUart0ChannelBuffRx[1+i] < '0' || VirtUart0ChannelBuffRx[1+i] > '9') {
+#if TRC_LA
                 sprintf(mUartBuffTx, "CM4 : treatRxCommand2 ERROR wrong frequency digit:%c at offset:%d\n",
                         VirtUart0ChannelBuffRx[1+i], 1+i);
-                VIRT_UART_Transmit(&huart0, (uint8_t*)mUartBuffTx, strlen(mUartBuffTx));
+                VIRT_UART_Transmit(&huart1, (uint8_t*)mUartBuffTx, strlen(mUartBuffTx));
+#endif
 
                 return false;
             }
         }
         if (VirtUart0ChannelBuffRx[4] != 'M' && VirtUart0ChannelBuffRx[4] != 'k' && VirtUart0ChannelBuffRx[4] != 'H') {
+#if TRC_LA
             sprintf(mUartBuffTx, "CM4 : treatRxCommand2 ERROR wrong frequency unit:%c\n", VirtUart0ChannelBuffRx[4]);
-            VIRT_UART_Transmit(&huart0, (uint8_t*)mUartBuffTx, strlen(mUartBuffTx));
+            VIRT_UART_Transmit(&huart1, (uint8_t*)mUartBuffTx, strlen(mUartBuffTx));
+#endif
             return false;
         }
         m_samp_freq = (int)(VirtUart0ChannelBuffRx[1] - '0') * 100
@@ -303,82 +359,95 @@ uint8_t treatRxCommand2() {
         } else if (VirtUart0ChannelBuffRx[4] == 'M') {
             m_samp_freq *= 1000000;
         }
-        sprintf(mUartBuffTx, "CM4 : treatRxCommand2 OK frequency=%ld\n", m_samp_freq);
-        VIRT_UART_Transmit(&huart0, (uint8_t*)mUartBuffTx, strlen(mUartBuffTx));
+#if TRC_LA
+        sprintf(mUartBuffTx1, "CM4 : treatRxCommand2 OK frequency=%ld\n", m_samp_freq);
+        VIRT_UART_Transmit(&huart1, (uint8_t*)mUartBuffTx1, strlen(mUartBuffTx1));
+#endif
         return true;
     } else if (VirtUart0ChannelBuffRx[0] == 'E') {
         // exit requested
         fStopRequested = SET;
-    } else if (VirtUart0ChannelBuffRx[0] == 'r') {
-    	  sprintf(mUartBuffTx, "CM4 : mMCUfreq=%u mTIM2freq=%u\n",
-    	          (unsigned int)mMCUfreq, (unsigned int)mTIM2freq);
-    	  VIRT_UART_Transmit(&huart0, (uint8_t*)mUartBuffTx, strlen(mUartBuffTx));
-
-    	  sprintf(mUartBuffTx, "CM4 : boot successful with STM32Cube FW version: v%ld.%ld.%ld \n",
-    	                                            ((HAL_GetHalVersion() >> 24) & 0x000000FF),
-    	                                            ((HAL_GetHalVersion() >> 16) & 0x000000FF),
-    	                                           ((HAL_GetHalVersion() >> 8) & 0x000000FF));
-    	  VIRT_UART_Transmit(&huart0, (uint8_t*)mUartBuffTx, strlen(mUartBuffTx));
-    } else {
-        sprintf(mUartBuffTx, "CM4 : treatRxCommand2 ERROR wrong frequency command:%c instead of: S\n",
-                VirtUart0ChannelBuffRx[0]);
-        VIRT_UART_Transmit(&huart0, (uint8_t*)mUartBuffTx, strlen(mUartBuffTx));
+        return true;
     }
     return false;
 }
 
+/**
+  * @brief  Function which treats a buffer allocation.
+  * @retval none
+  */
 void treatSDBEvent() {
     // example command: B0AxxxxxxxxLyyyyyyyy => Buff0 @:xx..x Length:yy..y
     if (SDB0ChannelBuffRx[0] != 'B') {
-        sprintf(mUartBuffTx, "CM4 : treatSDBEvent ERROR wrong buffer command:%c\n", SDB0ChannelBuffRx[0]);
-        VIRT_UART_Transmit(&huart0, (uint8_t*)mUartBuffTx, strlen(mUartBuffTx));
+#if TRC_LA
+        sprintf(mUartBuffTx1, "CM4 : treatSDBEvent ERROR wrong buffer command:%c\n", SDB0ChannelBuffRx[0]);
+        VIRT_UART_Transmit(&huart1, (uint8_t*)mUartBuffTx1, strlen(mUartBuffTx1));
+#endif
     }
     if (!((SDB0ChannelBuffRx[1] >= '0' && SDB0ChannelBuffRx[1] <= '3'))) {
-        sprintf(mUartBuffTx, "CM4 : treatSDBEvent ERROR wrong buffer index:%c\n", SDB0ChannelBuffRx[1]);
-        VIRT_UART_Transmit(&huart0, (uint8_t*)mUartBuffTx, strlen(mUartBuffTx));
+#if TRC_LA
+        sprintf(mUartBuffTx1, "CM4 : treatSDBEvent ERROR wrong buffer index:%c\n", SDB0ChannelBuffRx[1]);
+        VIRT_UART_Transmit(&huart1, (uint8_t*)mUartBuffTx1, strlen(mUartBuffTx1));
+#endif
         return;
     }
     if (mArrayDdrBuffCount != (SDB0ChannelBuffRx[1] - '0')) {
-        sprintf(mUartBuffTx, "CM4 : treatSDBEvent ERROR wrong buffer received index:%c awaited index:%d\n",
+#if TRC_LA
+        sprintf(mUartBuffTx1, "CM4 : treatSDBEvent ERROR wrong buffer received index:%c awaited index:%d\n",
                 SDB0ChannelBuffRx[1], mArrayDdrBuffCount);
-        VIRT_UART_Transmit(&huart0, (uint8_t*)mUartBuffTx, strlen(mUartBuffTx));
+        VIRT_UART_Transmit(&huart1, (uint8_t*)mUartBuffTx1, strlen(mUartBuffTx1));
+#endif
         return;
     }
     if (SDB0ChannelBuffRx[2] != 'A') {
-        sprintf(mUartBuffTx, "CM4 : treatSDBEvent ERROR wrong buffer address tag:%c instead of:A\n", SDB0ChannelBuffRx[1]);
-        VIRT_UART_Transmit(&huart0, (uint8_t*)mUartBuffTx, strlen(mUartBuffTx));
+#if TRC_LA
+        sprintf(mUartBuffTx1, "CM4 : treatSDBEvent ERROR wrong buffer address tag:%c instead of:A\n", SDB0ChannelBuffRx[1]);
+        VIRT_UART_Transmit(&huart1, (uint8_t*)mUartBuffTx1, strlen(mUartBuffTx1));
+#endif
         return ;
     }
     if (SDB0ChannelBuffRx[11] != 'L') {
-        sprintf(mUartBuffTx, "CM4 : treatSDBEvent ERROR wrong buffer length tag:%c instead of:L\n", SDB0ChannelBuffRx[11]);
-        VIRT_UART_Transmit(&huart0, (uint8_t*)mUartBuffTx, strlen(mUartBuffTx));
+#if TRC_LA
+        sprintf(mUartBuffTx1, "CM4 : treatSDBEvent ERROR wrong buffer length tag:%c instead of:L\n", SDB0ChannelBuffRx[11]);
+        VIRT_UART_Transmit(&huart1, (uint8_t*)mUartBuffTx1, strlen(mUartBuffTx1));
+#endif
         return ;
     }
     for (int i=0; i<8; i++) {
         if (!((SDB0ChannelBuffRx[3+i] >= '0' && SDB0ChannelBuffRx[3+i] <= '9') || (SDB0ChannelBuffRx[3+i] >= 'a' && SDB0ChannelBuffRx[3+i] <= 'f'))) {
-            sprintf(mUartBuffTx, "CM4 : treatSDBEvent ERROR wrong address digit:%c at offset:%d\n", SDB0ChannelBuffRx[3+i], 3+i);
-            VIRT_UART_Transmit(&huart0, (uint8_t*)mUartBuffTx, strlen(mUartBuffTx));
+#if TRC_LA
+            sprintf(mUartBuffTx1, "CM4 : treatSDBEvent ERROR wrong address digit:%c at offset:%d\n", SDB0ChannelBuffRx[3+i], 3+i);
+            VIRT_UART_Transmit(&huart1, (uint8_t*)mUartBuffTx1, strlen(mUartBuffTx1));
+#endif
             return ;
         }
         if (!((SDB0ChannelBuffRx[12+i] >= '0' && SDB0ChannelBuffRx[12+i] <= '9') || (SDB0ChannelBuffRx[12+i] >= 'a' && SDB0ChannelBuffRx[12+i] <= 'f'))) {
-            sprintf(mUartBuffTx, "CM4 : treatSDBEvent ERROR wrong length digit:%c at offset:%d\n", SDB0ChannelBuffRx[12+i], 12+i);
-            VIRT_UART_Transmit(&huart0, (uint8_t*)mUartBuffTx, strlen(mUartBuffTx));
+#if TRC_LA
+            sprintf(mUartBuffTx1, "CM4 : treatSDBEvent ERROR wrong length digit:%c at offset:%d\n", SDB0ChannelBuffRx[12+i], 12+i);
+            VIRT_UART_Transmit(&huart1, (uint8_t*)mUartBuffTx1, strlen(mUartBuffTx1));
+#endif
             return ;
         }
     }
     // save DDR buff @ and size
     mArrayDdrBuff[mArrayDdrBuffCount].physAddr = (uint32_t)strtoll((char*)&SDB0ChannelBuffRx[3], NULL, 16);
     mArrayDdrBuff[mArrayDdrBuffCount].physSize = (uint32_t)strtoll((char*)&SDB0ChannelBuffRx[12], NULL, 16);
-    sprintf(mUartBuffTx, "CM4 : treatSDBEvent OK physAddr=0x%lx physSize=%ld mArrayDdrBuffCount=%d\n",
+#if TRC_LA
+    sprintf(mUartBuffTx1, "CM4 : treatSDBEvent OK physAddr=0x%lx physSize=%ld mArrayDdrBuffCount=%d\n",
             mArrayDdrBuff[mArrayDdrBuffCount].physAddr,
             mArrayDdrBuff[mArrayDdrBuffCount].physSize,
             mArrayDdrBuffCount);
-    VIRT_UART_Transmit(&huart0, (uint8_t*)mUartBuffTx, strlen(mUartBuffTx));
+    VIRT_UART_Transmit(&huart1, (uint8_t*)mUartBuffTx1, strlen(mUartBuffTx1));
+#endif
 
     mArrayDdrBuffCount++;
 }
 
 
+/**
+  * @brief  Function which configure the TIM period according to Sampling frequency.
+  * @retval none
+  */
 void configureTimer(uint32_t period) {
     htim2.Init.Period = period;    // ex: m_samp_freq=12MHz => period = 16
     htim2.Instance = TIM2;
@@ -388,165 +457,302 @@ void configureTimer(uint32_t period) {
 
 }
 
+#if 0
+/*
+ * Packing algorithm on 3 bits:
+ * Sampling is done on available PE8..PE12
+ * Compression is done on Bit7..5
+ * Bit7..5=000: 1 data occurence
+ * Bit7..5=111: 8 data occurences
+ * No more used as too much CPU consumption
+ */
+uint8_t compressFrame(uint16_t idxStart, uint16_t idxStop) {
+	uint8_t res = 0;
+	for (int i=idxStart; i<idxStop; i++) {
+		if (mLastSamp != 0xFF) {  // needed to start the algo correctly
+			if (mLastSamp == mSampBuff[i]) {
+				mSampRepet++;
+				if (mSampRepet >= 7) {
+					// max number of occurence hit => time to save value
+					mSampBuffOut[mSampCount++] = (mLastSamp | 0xE0);    // save data including repetition
+					mLastSamp = 0xFF;
+					mSampRepet = -1;   // don't know yet, what will be next one
+				}
+			} else {
+				// new value different of previous one => save previous
+				mSampBuffOut[mSampCount++] = (mLastSamp | (mSampRepet << 5));    // save data including repetition
+				mLastSamp = mSampBuff[i] & 0x1F;
+				mSampRepet = 0;   // 1 occurence seen
+			}
+		} else {
+			mLastSamp = mSampBuff[i] & 0x1F;
+			mSampRepet = 0;   // 0 means 1 occurence, 7 means 8 occurences
+		}
+		if (mSampCount == SAMP_SRAM_PACKET_SIZE/2) {
+			res = 1;
+		} else if (mSampCount == (SAMP_SRAM_PACKET_SIZE)) {
+			res = 2;
+			mSampCount = 0;
+		}
+	}
+	return res;
+}
+#endif
+
+/*
+ * Packing algorithm on 1 bit:
+ * Sampling is done on available PE8..PE14
+ * Compression is done on Bit7
+ * Bit7=0: data present once
+ * Bit7=1: data present twice
+ */
+uint8_t packFrame(uint16_t idxStart, uint16_t idxStop) {
+	uint8_t res = 0;
+	for (int i=idxStart; i<idxStop; i++) {
+		if (mLastSamp != 0xFF) {  // needed to start the algo correctly
+			if (mLastSamp == (mSampBuff[i] & 0x7F)) {
+				// 2nd occurence => time to save value
+				mSampBuffOut[mSampCount++] = (mLastSamp | 0x80);    // save data including repetition
+				mLastSamp = 0xFF;
+			} else {
+				// new value different of previous one => save previous
+				mSampBuffOut[mSampCount++] = mLastSamp;    // save data with 1 occurence
+				mLastSamp = mSampBuff[i] & 0x7F;
+			}
+		} else {
+			mLastSamp = mSampBuff[i] & 0x7F;
+		}
+		if (mSampCount == mSramPacketSize/2) {
+			res = 1;
+		} else if (mSampCount == (mSramPacketSize)) {
+			res = 2;
+			mSampCount = 0;
+		}
+	}
+	return res;
+}
+
+/**
+  * @brief  Function which implements tha LogicAnalyser machine state.
+  * @retval none
+  */
 void LAStateMachine(void) {
     OPENAMP_check_for_message();
-    if (VirtUart0RxMsg) {
-      VirtUart0RxMsg = RESET;
-      if (treatRxCommand2()) {
-          if (mArrayDdrBuffCount >= 3) {
-              uint32_t period = mTIM2freq / m_samp_freq;
-              configureTimer(period);
-              mArrayDdrBuffIndex = 0;
-              mRollingCompSampCount = 0;
-              mDmaSramCount = 0;	// to know which SRAM buffer will be filled
-              mSampCount = 0;
-              mLastSamp = 0xFF;   // to be sure that the 1st comparison will fail in compr. algo.
-              mTotalCompSampCount = 0;
-              HAL_StatusTypeDef res = HAL_DMAEx_MultiBufferStart_IT(htim2.hdma[TIM_DMA_ID_UPDATE], GPIOx_IDR,
-                      (uint32_t)&mSampBuff[0], (uint32_t)&mSampBuff[SAMP_SRAM_PACKET_SIZE], SAMP_SRAM_PACKET_SIZE);
-              if (res == HAL_OK) {
-                  HAL_TIM_Base_Start(&htim2);
-                  __HAL_TIM_ENABLE_DMA(&htim2, TIM_DMA_UPDATE);
-                  sprintf(mUartBuffTx, "CM4 : LAStateMachine starting...\n");
-                  VIRT_UART_Transmit(&huart0, (uint8_t*)mUartBuffTx, strlen(mUartBuffTx));
-              } else {
-                  sprintf(mUartBuffTx, "CM4 : LAStateMachine starting HAL_DMAEx_MultiBufferStart_IT errorCode=%ld\n", htim2.hdma[TIM_DMA_ID_UPDATE]->ErrorCode);
-                  VIRT_UART_Transmit(&huart0, (uint8_t*)mUartBuffTx, strlen(mUartBuffTx));
-              }
-          } else {
-              // should return an ERROR !!!
-              sprintf(mUartBuffTx, "CM4 : LAStateMachine cmd ERROR mArrayDdrBuffCount=%d\n", mArrayDdrBuffCount);
-              VIRT_UART_Transmit(&huart0, (uint8_t*)mUartBuffTx, strlen(mUartBuffTx));
+    switch (mMachineState) {
+    case INITIALIZING:
+    	// waiting for SDB driver events, with at least 3 DDR buffers
+        if (SDB0RxMsg) {
+            SDB0RxMsg = RESET;
+            treatSDBEvent();
+        	if (mArrayDdrBuffCount >= 3) {
+        		mMachineState = DDR_BUFFERS_OK;
+        		  sprintf(mUartBuffTx1, "CM4 : LA ready MCU freq=%lu TIM2 freq=%lu\n",
+        				  mMCUfreq, mTIM2freq);
+        		  VIRT_UART_Transmit(&huart1, (uint8_t*)mUartBuffTx1, strlen(mUartBuffTx1));
+        	}
+        }
+    	break;
+    case DDR_BUFFERS_OK:
+    	// ready to accept a sampling command
+        if (VirtUart0RxMsg) {
+          VirtUart0RxMsg = RESET;
+          if (treatRxCommand2()) {
+        	  if (m_samp_freq > 5000000) {
+        		  //   if > 4MHz => no compression & Data over DMA
+				  uint32_t period = mTIM2freq / m_samp_freq;
+				  configureTimer(period);
+				  mArrayDdrBuffIndex = 0;
+				  mRollingCompSampCount = 0;
+				  mSampCount = 0;
+				  mLastSamp = 0xFF;   // to be sure that the 1st comparison will fail in compr. algo.
+				  mTotalCompSampCount = 0;
+				  mSramPacketSize = SAMP_SRAM_DDR_DMA_PACKET_SIZE;
+				  // in DDR DMA transfer we will transfer by packet of 1024 bytes (4 times the size of RPMSG)
+				  HAL_StatusTypeDef res = HAL_DMA_Start_IT(htim2.hdma[TIM_DMA_ID_UPDATE], GPIOx_IDR, (uint32_t)&mSampBuff[0], mSramPacketSize);
+				  if (res == HAL_OK) {
+					  HAL_TIM_Base_Start(&htim2);
+					  __HAL_TIM_ENABLE_DMA(&htim2, TIM_DMA_UPDATE);
+#if TRC_LA
+					  sprintf(mUartBuffTx1, "CM4 : LAStateMachine start sampling high frequency...\n");
+					  VIRT_UART_Transmit(&huart1, (uint8_t*)mUartBuffTx1, strlen(mUartBuffTx1));
+#endif
+			    	  mMachineState = SAMPLING_HIGH_FREQ_BUFF1;
+				  } else {
+#if TRC_LA
+					  sprintf(mUartBuffTx1, "CM4 : LAStateMachine starting HAL_DMA_Start_IT errorCode=%ld\n", htim2.hdma[TIM_DMA_ID_UPDATE]->ErrorCode);
+					  VIRT_UART_Transmit(&huart1, (uint8_t*)mUartBuffTx1, strlen(mUartBuffTx1));
+#endif
+					  // no machine state change
+				  }
+        	  } else {
+            	  // samp. freq.  < 4MHz => compression & Data over TTY
+        		  uint32_t period = mTIM2freq / m_samp_freq;
+        		  configureTimer(period);
+        		  mArrayDdrBuffIndex = 0;
+        		  mRollingCompSampCount = 0;
+        		  mSampCount = 0;
+        		  mTotalCompSampCount = 0;
+        		  mLastSamp = 0xFF;
+				  mSramPacketSize = SAMP_SRAM_RPMSG_PACKET_SIZE;
+        		  // RPMSG transfer size is limited to 496 due t0 buffer header, so we will perform transfer 256bytes at half and full DMA interrupt
+				  HAL_StatusTypeDef res = HAL_DMA_Start_IT(htim2.hdma[TIM_DMA_ID_UPDATE], GPIOx_IDR, (uint32_t)&mSampBuff[0], mSramPacketSize);
+        		  if (res == HAL_OK) {
+        			  HAL_TIM_Base_Start(&htim2);
+        			  __HAL_TIM_ENABLE_DMA(&htim2, TIM_DMA_UPDATE);
+#if TRC_LA
+        			  sprintf(mUartBuffTx1, "CM4 : LAStateMachine start sampling low frequency...\n");
+					  VIRT_UART_Transmit(&huart1, (uint8_t*)mUartBuffTx1, strlen(mUartBuffTx1));
+#endif
+        	    	  mMachineState = SAMPLING_LOW_FREQ_BUFF1;
+        		  } else {
+#if TRC_LA
+        			  sprintf(mUartBuffTx1, "CM4 : LAStateMachine starting HAL_DMA_Start_IT errorCode=%ld\n", htim2.hdma[TIM_DMA_ID_UPDATE]->ErrorCode);
+					  VIRT_UART_Transmit(&huart1, (uint8_t*)mUartBuffTx1, strlen(mUartBuffTx1));
+#endif
+					  // no machine state change
+        		  }
+        	  }
           }
-
-      }
-    }
-    if (SDB0RxMsg) {
-        SDB0RxMsg = RESET;
-        treatSDBEvent();
-    }
-    if (fDdrDma2Send0) {
-        fDdrDma2Send0 = RESET;
-#ifdef USE_COMPRESSION_IN_IRQ
-        if (HAL_DMA_Start_IT(&hdma_memtomem_dma2_stream1, (uint32_t)&mSampBuffOut[0],
-                mArrayDdrBuff[mArrayDdrBuffIndex].physAddr+mRollingCompSampCount, SAMP_SRAM_PACKET_SIZE) != HAL_OK)
-        {
-          /* Transfer Error */
-            sprintf(mUartBuffTx, "CM4 : LAStateMachine, fDdrDma2Send0 SET => HAL_DMA_Start_IT error !!!\n");
-            VIRT_UART_Transmit(&huart0, (uint8_t*)mUartBuffTx, strlen(mUartBuffTx));
         }
+    	break;
+    case SAMPLING_LOW_FREQ_BUFF1:
+        if (fDdrDma2Send0) {
+            fDdrDma2Send0 = RESET;
+#ifdef COMPRESS
+            uint8_t res = packFrame(0, mSramPacketSize/2);
+            if (res == 1) {
+            	// time to transfer compressed buffer0 over TTY
+    			VIRT_UART_Transmit(&huart0, (uint8_t*)&mSampBuffOut[0], mSramPacketSize/2);
+            } else if (res == 2) {
+            	// time to transfer compressed buffer1 over TTY
+            	VIRT_UART_Transmit(&huart0, (uint8_t*)&mSampBuffOut[mSramPacketSize/2], mSramPacketSize/2);
+            }
 #else
-#ifdef USE_COMPRESSION_IN_MAIN
-		for (int i=0; i<SAMP_SRAM_PACKET_SIZE; i++) {
-			/*
-			 * mLastSamp saves the last sample value where:
-			 * - the 3 MSBs are set to 1 (compression algo has not yet been performed once
-			 * - the 3 MSBs are masked to 0 (compression algo has already been performed)
-			 * When Linux application request to start sampling, it sets mLastSamp to 0xFF (3 MSBs to 1)
-			 */
-			if (mLastSamp != 0xFF) {  // needed to start the algo correctly
-				if (mLastSamp == (mSampBuff[i] & 0x1F)) {
-					mSampRepet++;
-					if (mSampRepet >= 7) {
-						// max number of occurence hit => time to save value
-						mSampBuffOut[mSampCount++] = (mLastSamp | 0xE0);    // save data including repetition
-						mLastSamp = 0xFF;
-						mSampRepet = -1;   // don't know yet, what will be next one
-					}
-				} else {
-					// new value different of previous one => save previous
-					mSampBuffOut[mSampCount++] = (mLastSamp | (mSampRepet << 5));    // save data including repetition
-					mLastSamp = (mSampBuff[i] & 0x1F);
-					mSampRepet = 0;   // 1 occurence seen
-				}
-			} else {
-				mLastSamp = (mSampBuff[i] & 0x1F);
-				mSampRepet = 0;   // 0 means 1 occurence, 7 means 8 occurences
-			}
-			if (mSampCount == SAMP_SRAM_PACKET_SIZE) {
-				// time to transfer compressed buffer0 in DDR
-		        HAL_DMA_Start_IT(&hdma_memtomem_dma2_stream1, (uint32_t)&mSampBuffOut[0],
-		                mArrayDdrBuff[mArrayDdrBuffIndex].physAddr+mRollingCompSampCount, SAMP_SRAM_PACKET_SIZE);
-			} else if (mSampCount == (SAMP_SRAM_PACKET_SIZE*2)) {
-				// time to transfer compressed buffer1 in DDR
-		        HAL_DMA_Start_IT(&hdma_memtomem_dma2_stream1, (uint32_t)&mSampBuffOut[SAMP_SRAM_PACKET_SIZE],
-		                mArrayDdrBuff[mArrayDdrBuffIndex].physAddr+mRollingCompSampCount, SAMP_SRAM_PACKET_SIZE);
-				mSampCount = 0;
-			}
-		}
-#else
-    	if (HAL_DMA_Start_IT(&hdma_memtomem_dma2_stream1, (uint32_t)&mSampBuff[0],
-			mArrayDdrBuff[mArrayDdrBuffIndex].physAddr+mRollingCompSampCount, SAMP_SRAM_PACKET_SIZE) != HAL_OK)
-        {
-          /* Transfer Error */
-            sprintf(mUartBuffTx, "CM4 : LAStateMachine, fDdrDma2Send0 SET => HAL_DMA_Start_IT error !!!\n");
-            VIRT_UART_Transmit(&huart0, (uint8_t*)mUartBuffTx, strlen(mUartBuffTx));
+            //HAL_GPIO_WritePin(GPIOE, LA_0_Pin, GPIO_PIN_SET);
+			VIRT_UART_Transmit(&huart0, (uint8_t*)&mSampBuff[0], mSramPacketSize/2);
+#endif
+	    	mMachineState = SAMPLING_LOW_FREQ_BUFF2;
         }
+        if (VirtUart0RxMsg) {
+          VirtUart0RxMsg = RESET;
+          if (treatRxCommand2()) {
+			if (fStopRequested) {
+				fStopRequested = RESET;
+				HAL_DMA_Abort_IT(htim2.hdma[TIM_DMA_ID_UPDATE]);
+				HAL_TIM_Base_Stop(&htim2);
+				mMachineState = DDR_BUFFERS_OK;
+				sprintf(mUartBuffTx1, "CM4 : LAStateMachine SAMPLING_LOW_FREQ_BUFF1 fStopRequested\n");
+				VIRT_UART_Transmit(&huart1, (uint8_t*)mUartBuffTx1, strlen(mUartBuffTx1));
+			}
+          }
+        }
+    	break;
+    case SAMPLING_LOW_FREQ_BUFF2:
+        if (fDdrDma2Send1) {
+            fDdrDma2Send1 = RESET;
+#ifdef COMPRESS
+            uint8_t res = packFrame(mSramPacketSize/2, mSramPacketSize);
+            if (res == 1) {
+            	// time to transfer compressed buffer0 over TTY
+    			VIRT_UART_Transmit(&huart0, (uint8_t*)&mSampBuffOut[0], mSramPacketSize/2);
+            } else if (res == 2) {
+            	// time to transfer compressed buffer1 over TTY
+            	VIRT_UART_Transmit(&huart0, (uint8_t*)&mSampBuffOut[mSramPacketSize/2], mSramPacketSize/2);
+            }
+#else
+            //HAL_GPIO_WritePin(GPIOE, LA_0_Pin, GPIO_PIN_RESET);
+			VIRT_UART_Transmit(&huart0, (uint8_t*)&mSampBuff[mSramPacketSize/2], mSramPacketSize/2);
 #endif
 
-#endif
-    }
-    if (fDdrDma2Send1) {
-        fDdrDma2Send1 = RESET;
-#ifdef USE_COMPRESSION_IN_IRQ
-        if (HAL_DMA_Start_IT(&hdma_memtomem_dma2_stream1, (uint32_t)&mSampBuffOut[SAMP_SRAM_PACKET_SIZE],
-                mArrayDdrBuff[mArrayDdrBuffIndex].physAddr+mRollingCompSampCount, SAMP_SRAM_PACKET_SIZE) != HAL_OK)
-        {
-          /* Transfer Error */
-            sprintf(mUartBuffTx, "CM4 : LAStateMachine, fDdrDma2Send0 SET => HAL_DMA_Start_IT error !!!\n");
-            VIRT_UART_Transmit(&huart0, (uint8_t*)mUartBuffTx, strlen(mUartBuffTx));
+	    	mMachineState = SAMPLING_LOW_FREQ_BUFF1;
         }
-#else
-#ifdef USE_COMPRESSION_IN_MAIN
-		for (int i=0; i<SAMP_SRAM_PACKET_SIZE; i++) {
-			if (mLastSamp != 0xFF) {  // needed to start the algo correctly
-				if (mLastSamp == mSampBuff[i]) {
-					mSampRepet++;
-					if (mSampRepet >= 7) {
-						// max number of occurence hit => time to save value
-						mSampBuffOut[mSampCount++] = (mLastSamp | 0xE0);    // save data including repetition
-						mLastSamp = 0xFF;
-						mSampRepet = -1;   // don't know yet, what will be next one
-					}
-				} else {
-					// new value different of previous one => save previous
-					mSampBuffOut[mSampCount++] = (mLastSamp | (mSampRepet << 5));    // save data including repetition
-					mLastSamp = mSampBuff[i] & 0x1F;
-					mSampRepet = 0;   // 1 occurence seen
-				}
-			} else {
-				mLastSamp = mSampBuff[i] & 0x1F;
-				mSampRepet = 0;   // 0 means 1 occurence, 7 means 8 occurences
+        if (VirtUart0RxMsg) {
+          VirtUart0RxMsg = RESET;
+          if (treatRxCommand2()) {
+			if (fStopRequested) {
+				fStopRequested = RESET;
+				HAL_DMA_Abort_IT(htim2.hdma[TIM_DMA_ID_UPDATE]);
+				HAL_TIM_Base_Stop(&htim2);
+				mMachineState = DDR_BUFFERS_OK;
+				sprintf(mUartBuffTx1, "CM4 : LAStateMachine SAMPLING_LOW_FREQ_BUFF2 fStopRequested\n");
+				VIRT_UART_Transmit(&huart1, (uint8_t*)mUartBuffTx1, strlen(mUartBuffTx1));
 			}
-			if (mSampCount == SAMP_SRAM_PACKET_SIZE) {
-				// time to transfer compressed buffer0 in DDR
-		        HAL_DMA_Start_IT(&hdma_memtomem_dma2_stream1, (uint32_t)&mSampBuffOut[0],
-		                mArrayDdrBuff[mArrayDdrBuffIndex].physAddr+mRollingCompSampCount, SAMP_SRAM_PACKET_SIZE);
-			} else if (mSampCount == (SAMP_SRAM_PACKET_SIZE*2)) {
-				// time to transfer compressed buffer1 in DDR
-		        HAL_DMA_Start_IT(&hdma_memtomem_dma2_stream1, (uint32_t)&mSampBuffOut[SAMP_SRAM_PACKET_SIZE],
-		                mArrayDdrBuff[mArrayDdrBuffIndex].physAddr+mRollingCompSampCount, SAMP_SRAM_PACKET_SIZE);
-				mSampCount = 0;
-			}
-		}
-#else
-		if (HAL_DMA_Start_IT(&hdma_memtomem_dma2_stream1, (uint32_t)&mSampBuff[SAMP_SRAM_PACKET_SIZE],
-				mArrayDdrBuff[mArrayDdrBuffIndex].physAddr+mRollingCompSampCount, SAMP_SRAM_PACKET_SIZE) != HAL_OK)
-        {
-          /* Transfer Error */
-            sprintf(mUartBuffTx, "CM4 : LAStateMachine, fDdrDma2Send1 SET => HAL_DMA_Start_IT error !!!\n");
-            VIRT_UART_Transmit(&huart0, (uint8_t*)mUartBuffTx, strlen(mUartBuffTx));
+          }
         }
+    	break;
+    case SAMPLING_HIGH_FREQ_BUFF1:
+    	// waiting end of DMA transfer
+        if (fDdrDma2Send0) {
+            fDdrDma2Send0 = RESET;
+#ifdef COMPRESS
+            uint8_t res = packFrame(mSramPacketSize/2, mSramPacketSize);
+            if (res == 1) {
+    			// time to transfer raw buffer0 in DDR
+    			HAL_DMA_Start_IT(&hdma_memtomem_dma2_stream1, (uint32_t)&mSampBuffOut[0],
+    					mArrayDdrBuff[mArrayDdrBuffIndex].physAddr+mRollingCompSampCount, mSramPacketSize/2);
+            } else if (res == 2) {
+    			// time to transfer raw buffer1 in DDR
+    			HAL_DMA_Start_IT(&hdma_memtomem_dma2_stream1, (uint32_t)&mSampBuffOut[mSramPacketSize/2],
+    					mArrayDdrBuff[mArrayDdrBuffIndex].physAddr+mRollingCompSampCount, mSramPacketSize/2);
+            }
+#else
+			// time to transfer raw buffer0 in DDR
+			HAL_DMA_Start_IT(&hdma_memtomem_dma2_stream1, (uint32_t)&mSampBuff[0],
+					mArrayDdrBuff[mArrayDdrBuffIndex].physAddr+mRollingCompSampCount, mSramPacketSize/2);
 #endif
+	    	mMachineState = SAMPLING_HIGH_FREQ_BUFF2;
+        }
+        if (VirtUart0RxMsg) {
+          VirtUart0RxMsg = RESET;
+          if (treatRxCommand2()) {
+			if (fStopRequested) {
+				fStopRequested = RESET;
+	            HAL_DMA_Abort_IT(&hdma_memtomem_dma2_stream1);
+				HAL_DMA_Abort_IT(htim2.hdma[TIM_DMA_ID_UPDATE]);
+				HAL_TIM_Base_Stop(&htim2);
+				mMachineState = DDR_BUFFERS_OK;
+				sprintf(mUartBuffTx1, "CM4 : LAStateMachine SAMPLING_HIGH_FREQ_BUFF1 fStopRequested\n");
+				VIRT_UART_Transmit(&huart1, (uint8_t*)mUartBuffTx1, strlen(mUartBuffTx1));
+			}
+          }
+        }
+    	break;
+    case SAMPLING_HIGH_FREQ_BUFF2:
+        if (fDdrDma2Send1) {
+            fDdrDma2Send1 = RESET;
+#ifdef COMPRESS
+            uint8_t res = packFrame(mSramPacketSize/2, mSramPacketSize);
+            if (res == 1) {
+    			// time to transfer raw buffer0 in DDR
+    			HAL_DMA_Start_IT(&hdma_memtomem_dma2_stream1, (uint32_t)&mSampBuffOut[0],
+    					mArrayDdrBuff[mArrayDdrBuffIndex].physAddr+mRollingCompSampCount, mSramPacketSize/2);
+            } else if (res == 2) {
+    			// time to transfer raw buffer1 in DDR
+    			HAL_DMA_Start_IT(&hdma_memtomem_dma2_stream1, (uint32_t)&mSampBuffOut[mSramPacketSize/2],
+    					mArrayDdrBuff[mArrayDdrBuffIndex].physAddr+mRollingCompSampCount, mSramPacketSize/2);
+            }
+#else
+			// time to transfer raw buffer1 in DDR
+			HAL_DMA_Start_IT(&hdma_memtomem_dma2_stream1, (uint32_t)&mSampBuff[mSramPacketSize/2],
+					mArrayDdrBuff[mArrayDdrBuffIndex].physAddr+mRollingCompSampCount, mSramPacketSize/2);
 #endif
-
-    }
-    if (fStopRequested) {
-        fStopRequested = RESET;
-        HAL_DMA_Abort_IT(&hdma_memtomem_dma2_stream1);
-        HAL_DMA_Abort_IT(htim2.hdma[TIM_DMA_ID_UPDATE]);
-        HAL_TIM_Base_Stop(&htim2);
-
+	    	mMachineState = SAMPLING_HIGH_FREQ_BUFF1;
+        }
+        if (VirtUart0RxMsg) {
+          VirtUart0RxMsg = RESET;
+          if (treatRxCommand2()) {
+			if (fStopRequested) {
+				fStopRequested = RESET;
+	            HAL_DMA_Abort_IT(&hdma_memtomem_dma2_stream1);
+				HAL_DMA_Abort_IT(htim2.hdma[TIM_DMA_ID_UPDATE]);
+				HAL_TIM_Base_Stop(&htim2);
+				mMachineState = DDR_BUFFERS_OK;
+				sprintf(mUartBuffTx1, "CM4 : LAStateMachine SAMPLING_HIGH_FREQ_BUFF2 fStopRequested\n");
+				VIRT_UART_Transmit(&huart1, (uint8_t*)mUartBuffTx1, strlen(mUartBuffTx1));
+			}
+          }
+        }
+    	break;
     }
 }
 
@@ -603,8 +809,9 @@ int main(void)
   MX_DMA_Init();
   MX_TIM2_Init();
   /* USER CODE BEGIN 2 */
+  htim2.hdma[TIM_DMA_ID_UPDATE]->XferHalfCpltCallback = HalfTransferCompleteSRAM;
   htim2.hdma[TIM_DMA_ID_UPDATE]->XferCpltCallback = TransferCompleteSRAM;
-  htim2.hdma[TIM_DMA_ID_UPDATE]->XferM1CpltCallback = TransferCompleteSRAM;
+  //htim2.hdma[TIM_DMA_ID_UPDATE]->XferM1CpltCallback = TransferCompleteSRAM;
   htim2.hdma[TIM_DMA_ID_UPDATE]->XferErrorCallback = TransferErrorSRAM;
 
   HAL_DMA_RegisterCallback(&hdma_memtomem_dma2_stream1, HAL_DMA_XFER_CPLT_CB_ID, TransferCompleteDDR);
@@ -625,14 +832,17 @@ int main(void)
   }
 
   /*
-   * Create Virtual UART device
-   * defined by a rpmsg channel attached to the remote device
+   * Create Virtual UART devices
    */
-  huart0.rvdev =  &rvdev;
   log_info("Virtual UART0 OpenAMP-rpmsg channel creation\r\n");
   if (VIRT_UART_Init(&huart0) != VIRT_UART_OK) {
     log_err("VIRT_UART_Init UART0 failed.\r\n");
-    //_Error_Handler(__FILE__, __LINE__);
+    Error_Handler();
+  }
+
+  log_info("Virtual UART1 OpenAMP-rpmsg channel creation\r\n");
+  if (VIRT_UART_Init(&huart1) != VIRT_UART_OK) {
+    log_err("VIRT_UART_Init UART1 failed.\r\n");
     Error_Handler();
   }
 
@@ -642,18 +852,16 @@ int main(void)
     Error_Handler();
   }
 
-  /*Need to register callback for message reception by channels*/
+  /*Need to register callback for message reception by channels (not for UART1 as used only for trace outpout) */
   if(VIRT_UART_RegisterCallback(&huart0, VIRT_UART_RXCPLT_CB_ID, VIRT_UART0_RxCpltCallback) != VIRT_UART_OK)
   {
     Error_Handler();
   }
 
-  //mMCUfreq = HAL_RCCEx_GetSystemCoreClockFreq();
   mMCUfreq = HAL_RCC_GetMCUFreq();
   mTIM2freq = HAL_RCCEx_GetPeriphCLKFreq(RCC_PERIPHCLK_TIMG1);
 
   //while (debug_loop == 0);
-
   /* USER CODE END 2 */
 
   /* Infinite loop */
@@ -905,13 +1113,24 @@ static void MX_GPIO_Init(void)
   __HAL_RCC_GPIOC_CLK_ENABLE();
   __HAL_RCC_GPIOH_CLK_ENABLE();
 
+  HAL_GPIO_WritePin(GPIOE, LA_4_Pin, GPIO_PIN_RESET);
+  HAL_GPIO_WritePin(GPIOE, LA_3_Pin, GPIO_PIN_RESET);
+  HAL_GPIO_WritePin(GPIOE, LA_2_Pin, GPIO_PIN_RESET);
+  HAL_GPIO_WritePin(GPIOE, LA_1_Pin, GPIO_PIN_RESET);
+  HAL_GPIO_WritePin(GPIOE, LA_0_Pin, GPIO_PIN_RESET);
+
   /*Configure GPIO pins : LA_3_Pin LA_4_Pin LA_2_Pin LA_1_Pin
                            LA_0_Pin */
   GPIO_InitStruct.Pin = LA_3_Pin|LA_4_Pin|LA_2_Pin|LA_1_Pin
                           |LA_0_Pin;
+#if SET_DATA
+  GPIO_InitStruct.Mode = GPIO_MODE_OUTPUT_PP;
+#else
   GPIO_InitStruct.Mode = GPIO_MODE_INPUT;
+#endif
   GPIO_InitStruct.Pull = GPIO_NOPULL;
   HAL_GPIO_Init(GPIOE, &GPIO_InitStruct);
+
 
 }
 
@@ -928,8 +1147,10 @@ void Error_Handler(void)
   /* USER CODE BEGIN Error_Handler_Debug */
   /* User can add his own implementation to report the HAL error return state */
   __disable_irq();
+#if 0
   sprintf(mUartBuffTx, "CM4 : OOOps: Error_Handler\n");
-  VIRT_UART_Transmit(&huart0, (uint8_t*)mUartBuffTx, strlen(mUartBuffTx));
+  VIRT_UART_Transmit(&huart1, (uint8_t*)mUartBuffTx, strlen(mUartBuffTx));
+#endif
   while (1)
   {
   }
