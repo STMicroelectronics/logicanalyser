@@ -35,20 +35,23 @@
  *  UART0 for A7 to M4 sampling commands (start/stop), and low data rate M4 to A7
  *  UART1 for M4 trace
  *
- * LogicAnalyser sampling is done on PE8..14 available on Arduino connector of MB1272
+ * LogicAnalyser sampling is done on PE8..14 available on Arduino connector of MB1372
  *
  * Compression algorithm is done on M4 side, on MSB on data
  *
- * Sampling is done in SRAM buffer thanks to TIM2 and DMA2
+ * Sampling is done in SARM buffer thanks to TIM2 and DMA2
  *  PE7..17 => DMA2 => SRAM_buff
  *  DMA half and DMA full interrupts are used to avoid data over writing
+ *
+ * The number of DDR buffers is sent by Linux application at its start
  *
  * Compression is then performed by M4
  *
  * Finally compressed buffers are transfered to DDR by DMA or virtualUART
  *
- * In order to insure dynamic input data on PE8..12, these Ports are initialized as output
- *  values are changed in TransferCompleteSRAM every 23 times
+ * Linux application send the "Set DATA" parameter in the Sampling command.
+ * If "Set DATA" is set output data will be set by this FW on PE8..12, and these Ports will be initialized as output
+ *  output data values are changed in TransferCompleteSRAM every 23 times
  *
  * On UI, refresh is done every new MB of compressed data
  *
@@ -64,8 +67,6 @@
 #define COPRO_SYNC_SHUTDOWN_CHANNEL  IPCC_CHANNEL_3
 #define TRC_LA 1
 #define COMPRESS
-/* Use this switch to verify that data is changing even if no signal connected
- * on PE8..PE12 */
 #define SET_DATA 1
 
 typedef enum {
@@ -154,13 +155,14 @@ uint8_t mSampBuffOut[SAMP_SRAM_DDR_DMA_PACKET_SIZE];   			// use a circular buff
 volatile static HDR_DdrBuffTypeDef mArrayDdrBuff[MAX_DDR_BUFF]; // used to store DDR buff allocated by Linux driver
 volatile uint8_t mArrayDdrBuffCount = 0;
 volatile uint8_t mArrayDdrBuffIndex = 0;  						// will vary from 0 to mArrayDdrBuffCount-1
+uint8_t mDdrBuffCount = 3;		// by default 3 DDR buff, this should be a parameter of sampling command
 uint16_t mSramPacketSize;
 uint32_t mSampCount;    // nb of compressed sample
 uint8_t mLastSamp;
 int8_t mSampRepet;
-#if SET_DATA
+
+int8_t mSetData = 0;
 uint8_t mPatternOut = 0, mPatterPreCounter = 0;
-#endif
 
 Machine_State_t mMachineState = INITIALIZING;
 char testStr[21] = {"B0Ad4200000L00100000"};
@@ -255,8 +257,6 @@ static void TransferCompleteDDR(DMA_HandleTypeDef *DmaHandle)
         // time to change DDR buffer and send MSG to Linux
         sprintf(mSdbBuffTx, "B%dL%08x", mArrayDdrBuffIndex, SAMP_DDR_BUFFER_SIZE);
         RPMSG_HDR_Transmit(&hsdb0, (uint8_t*)mSdbBuffTx, strlen(mSdbBuffTx));
-        //sprintf(mUartBuffTx, "DMA2DDR-B%dL%08x", mArrayDdrBuffIndex, SAMP_DDR_BUFFER_SIZE);
-        //VIRT_UART_Transmit(&huart1, (uint8_t*)mUartBuffTx, strlen(mUartBuffTx));
         mRollingCompSampCount = 0;
         mArrayDdrBuffIndex++;
         if (mArrayDdrBuffIndex == mArrayDdrBuffCount) {
@@ -287,17 +287,17 @@ static void TransferCompleteSRAM(DMA_HandleTypeDef *DmaHandle)
 {
 	// 2nd half buffer filled
 	fDdrDma2Send1 = SET;
-#if SET_DATA
-	mPatterPreCounter++;
-	if (mPatterPreCounter % 23 == 0) {
-		mPatternOut++;						// pattern to be put on PortE 8..12
-		if (mPatternOut > 31) {
-			mPatternOut = 0;
+	if (mSetData) {
+		mPatterPreCounter++;
+		if (mPatterPreCounter % 23 == 0) {
+			mPatternOut++;						// pattern to be put on PortE 8..12
+			if (mPatternOut > 31) {
+				mPatternOut = 0;
+			}
+			GPIOE->ODR &= 0xFFFF80FF;			// 2nd byte of ODR is out target
+			GPIOE->ODR |= (mPatternOut << 8);
 		}
-		GPIOE->ODR &= 0xFFFFE0FF;			// 2nd byte of ODR is out target
-		GPIOE->ODR |= (mPatternOut << 8);
 	}
-#endif
 }
 
 /**
@@ -332,6 +332,7 @@ static void TransferErrorSRAM(DMA_HandleTypeDef *DmaHandle)
   */
 uint8_t treatRxCommand2() {
     // example command: S002M => Sample, rate 002MHz
+    // example command: S002Msy => Sample, rate 002MHz, SET DATA yes
     if (VirtUart0ChannelBuffRx[0] == 'S') {
         for (int i=0; i<3; i++) {
             if (VirtUart0ChannelBuffRx[1+i] < '0' || VirtUart0ChannelBuffRx[1+i] > '9') {
@@ -351,6 +352,21 @@ uint8_t treatRxCommand2() {
 #endif
             return false;
         }
+        if (VirtUart0ChannelBuffRx[5] != 's') {
+#if TRC_LA
+            sprintf(mUartBuffTx, "CM4 : treatRxCommand2 ERROR wrong SET DATA tag:%c\n", VirtUart0ChannelBuffRx[5]);
+            VIRT_UART_Transmit(&huart1, (uint8_t*)mUartBuffTx, strlen(mUartBuffTx));
+#endif
+            return false;
+        }
+        if (VirtUart0ChannelBuffRx[6] != 'y' && VirtUart0ChannelBuffRx[6] != 'n') {
+#if TRC_LA
+            sprintf(mUartBuffTx, "CM4 : treatRxCommand2 ERROR wrong SET DATA value:%c\n", VirtUart0ChannelBuffRx[6]);
+            VIRT_UART_Transmit(&huart1, (uint8_t*)mUartBuffTx, strlen(mUartBuffTx));
+#endif
+            return false;
+        }
+
         m_samp_freq = (int)(VirtUart0ChannelBuffRx[1] - '0') * 100
                  + (int)(VirtUart0ChannelBuffRx[2] - '0') * 10
                  + (int)(VirtUart0ChannelBuffRx[3] - '0') * 1;
@@ -359,11 +375,36 @@ uint8_t treatRxCommand2() {
         } else if (VirtUart0ChannelBuffRx[4] == 'M') {
             m_samp_freq *= 1000000;
         }
+        if (VirtUart0ChannelBuffRx[6] == 'y') {
+			mSetData = 1;
+        } else {
+    		mSetData = 0;
+        }
 #if TRC_LA
-        sprintf(mUartBuffTx1, "CM4 : treatRxCommand2 OK frequency=%ld\n", m_samp_freq);
+        sprintf(mUartBuffTx1, "CM4 : treatRxCommand2 OK frequency=%ld  setData=%d\n",
+        		m_samp_freq, mSetData);
         VIRT_UART_Transmit(&huart1, (uint8_t*)mUartBuffTx1, strlen(mUartBuffTx1));
 #endif
         return true;
+    } else if (VirtUart0ChannelBuffRx[0] == 'B') {
+        for (int i=0; i<2; i++) {
+            if (VirtUart0ChannelBuffRx[1+i] < '0' || VirtUart0ChannelBuffRx[1+i] > '9') {
+#if TRC_LA
+                sprintf(mUartBuffTx, "CM4 : treatRxCommand2 ERROR wrong DDR Buffer digit:%c at offset:%d\n",
+                        VirtUart0ChannelBuffRx[1+i], 1+i);
+                VIRT_UART_Transmit(&huart1, (uint8_t*)mUartBuffTx, strlen(mUartBuffTx));
+#endif
+
+                return false;
+            }
+        }
+        mDdrBuffCount = (int)(VirtUart0ChannelBuffRx[1] - '0') * 10
+                + (int)(VirtUart0ChannelBuffRx[2] - '0') * 1;
+#if TRC_LA
+		sprintf(mUartBuffTx, "CM4 : treatRxCommand2 DDR BUFFER command => mDdrBuffCount=%d\n",
+				mDdrBuffCount);
+		VIRT_UART_Transmit(&huart1, (uint8_t*)mUartBuffTx, strlen(mUartBuffTx));
+#endif
     } else if (VirtUart0ChannelBuffRx[0] == 'E') {
         // exit requested
         fStopRequested = SET;
@@ -384,12 +425,23 @@ void treatSDBEvent() {
         VIRT_UART_Transmit(&huart1, (uint8_t*)mUartBuffTx1, strlen(mUartBuffTx1));
 #endif
     }
-    if (!((SDB0ChannelBuffRx[1] >= '0' && SDB0ChannelBuffRx[1] <= '3'))) {
+    if (!((SDB0ChannelBuffRx[1] >= '0' && SDB0ChannelBuffRx[1] <= '9'))) {
+        if (!((SDB0ChannelBuffRx[1] >= 'A' && SDB0ChannelBuffRx[1] <= 'F'))) {
 #if TRC_LA
-        sprintf(mUartBuffTx1, "CM4 : treatSDBEvent ERROR wrong buffer index:%c\n", SDB0ChannelBuffRx[1]);
-        VIRT_UART_Transmit(&huart1, (uint8_t*)mUartBuffTx1, strlen(mUartBuffTx1));
+			sprintf(mUartBuffTx1, "CM4 : treatSDBEvent ERROR wrong buffer index:%c\n", SDB0ChannelBuffRx[1]);
+			VIRT_UART_Transmit(&huart1, (uint8_t*)mUartBuffTx1, strlen(mUartBuffTx1));
 #endif
-        return;
+			return;
+        } else {
+            if (mArrayDdrBuffCount != (SDB0ChannelBuffRx[1] - 'A' + 10)) {
+#if TRC_LA
+				sprintf(mUartBuffTx1, "CM4 : treatSDBEvent ERROR wrong buffer received index:%c awaited index:%d\n",
+						SDB0ChannelBuffRx[1], mArrayDdrBuffCount);
+				VIRT_UART_Transmit(&huart1, (uint8_t*)mUartBuffTx1, strlen(mUartBuffTx1));
+#endif
+
+            }
+    	}
     }
     if (mArrayDdrBuffCount != (SDB0ChannelBuffRx[1] - '0')) {
 #if TRC_LA
@@ -454,6 +506,30 @@ void configureTimer(uint32_t period) {
     htim2.Init.Prescaler = 0;
     htim2.Init.CounterMode = TIM_COUNTERMODE_UP;
     HAL_TIM_Base_Init(&htim2);
+
+}
+
+void config_GPIOs(uint8_t setData) {
+  GPIO_InitTypeDef GPIO_InitStruct = {0};
+
+if (setData) {
+  HAL_GPIO_WritePin(GPIOE, LA_6_Pin, GPIO_PIN_RESET);
+  HAL_GPIO_WritePin(GPIOE, LA_5_Pin, GPIO_PIN_RESET);
+  HAL_GPIO_WritePin(GPIOE, LA_4_Pin, GPIO_PIN_RESET);
+  HAL_GPIO_WritePin(GPIOE, LA_3_Pin, GPIO_PIN_RESET);
+  HAL_GPIO_WritePin(GPIOE, LA_2_Pin, GPIO_PIN_RESET);
+  HAL_GPIO_WritePin(GPIOE, LA_1_Pin, GPIO_PIN_RESET);
+  HAL_GPIO_WritePin(GPIOE, LA_0_Pin, GPIO_PIN_RESET);
+}
+  GPIO_InitStruct.Pin = LA_6_Pin|LA_5_Pin|LA_4_Pin|LA_3_Pin
+		  |LA_2_Pin|LA_1_Pin|LA_0_Pin;
+if (setData) {
+  GPIO_InitStruct.Mode = GPIO_MODE_OUTPUT_PP;
+} else {
+  GPIO_InitStruct.Mode = GPIO_MODE_INPUT;
+}
+  GPIO_InitStruct.Pull = GPIO_NOPULL;
+  HAL_GPIO_Init(GPIOE, &GPIO_InitStruct);
 
 }
 
@@ -544,12 +620,16 @@ void LAStateMachine(void) {
         if (SDB0RxMsg) {
             SDB0RxMsg = RESET;
             treatSDBEvent();
-        	if (mArrayDdrBuffCount >= 3) {
+        	if (mArrayDdrBuffCount >= mDdrBuffCount) {	// is number of buffer in line with received command ?
         		mMachineState = DDR_BUFFERS_OK;
-        		  sprintf(mUartBuffTx1, "CM4 : LA ready MCU freq=%lu TIM2 freq=%lu\n",
-        				  mMCUfreq, mTIM2freq);
+        		  sprintf(mUartBuffTx1, "CM4 : LA ready MCU freq=%lu TIM2 freq=%lu mDdrBuffCount=%d\n",
+        				  mMCUfreq, mTIM2freq, mDdrBuffCount);
         		  VIRT_UART_Transmit(&huart1, (uint8_t*)mUartBuffTx1, strlen(mUartBuffTx1));
         	}
+        }
+        if (VirtUart0RxMsg) {
+          VirtUart0RxMsg = RESET;
+          treatRxCommand2();	// to receive DDR BUFFER command
         }
     	break;
     case DDR_BUFFERS_OK:
@@ -557,6 +637,8 @@ void LAStateMachine(void) {
         if (VirtUart0RxMsg) {
           VirtUart0RxMsg = RESET;
           if (treatRxCommand2()) {
+    		  // check SET DATA and set GPIOs accordingly
+    		  config_GPIOs(mSetData);
         	  if (m_samp_freq > 5000000) {
         		  //   if > 4MHz => no compression & Data over DMA
 				  uint32_t period = mTIM2freq / m_samp_freq;
@@ -1113,24 +1195,13 @@ static void MX_GPIO_Init(void)
   __HAL_RCC_GPIOC_CLK_ENABLE();
   __HAL_RCC_GPIOH_CLK_ENABLE();
 
-  HAL_GPIO_WritePin(GPIOE, LA_4_Pin, GPIO_PIN_RESET);
-  HAL_GPIO_WritePin(GPIOE, LA_3_Pin, GPIO_PIN_RESET);
-  HAL_GPIO_WritePin(GPIOE, LA_2_Pin, GPIO_PIN_RESET);
-  HAL_GPIO_WritePin(GPIOE, LA_1_Pin, GPIO_PIN_RESET);
-  HAL_GPIO_WritePin(GPIOE, LA_0_Pin, GPIO_PIN_RESET);
-
   /*Configure GPIO pins : LA_3_Pin LA_4_Pin LA_2_Pin LA_1_Pin
                            LA_0_Pin */
   GPIO_InitStruct.Pin = LA_3_Pin|LA_4_Pin|LA_2_Pin|LA_1_Pin
                           |LA_0_Pin;
-#if SET_DATA
-  GPIO_InitStruct.Mode = GPIO_MODE_OUTPUT_PP;
-#else
   GPIO_InitStruct.Mode = GPIO_MODE_INPUT;
-#endif
   GPIO_InitStruct.Pull = GPIO_NOPULL;
   HAL_GPIO_Init(GPIOE, &GPIO_InitStruct);
-
 
 }
 
