@@ -58,10 +58,14 @@ void Error_Handler(void);
 /* USER CODE END EFP */
 
 /* Private defines -----------------------------------------------------------*/
-#define LA_3_Pin GPIO_PIN_11
-#define LA_3_GPIO_Port GPIOE
+#define LA_6_Pin GPIO_PIN_14
+#define LA_6_GPIO_Port GPIOE
+#define LA_5_Pin GPIO_PIN_13
+#define LA_5_GPIO_Port GPIOE
 #define LA_4_Pin GPIO_PIN_12
 #define LA_4_GPIO_Port GPIOE
+#define LA_3_Pin GPIO_PIN_11
+#define LA_3_GPIO_Port GPIOE
 #define LA_2_Pin GPIO_PIN_10
 #define LA_2_GPIO_Port GPIOE
 #define LA_1_Pin GPIO_PIN_9
