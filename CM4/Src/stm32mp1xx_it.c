@@ -52,6 +52,12 @@
 
 /* Private user code ---------------------------------------------------------*/
 /* USER CODE BEGIN 0 */
+typedef struct
+{
+  __IO uint32_t ISR;   /*!< DMA interrupt status register */
+  __IO uint32_t Reserved0;
+  __IO uint32_t IFCR;  /*!< DMA interrupt flag clear register */
+} DMA_Base_Registers;
 
 /* USER CODE END 0 */
 
@@ -60,6 +66,7 @@ extern DMA_HandleTypeDef hdma_memtomem_dma2_stream1;
 extern IPCC_HandleTypeDef hipcc;
 extern DMA_HandleTypeDef hdma_tim2_up;
 /* USER CODE BEGIN EV */
+extern volatile uint32_t mDmaSramISR;
 
 /* USER CODE END EV */
 
@@ -207,6 +214,11 @@ void SysTick_Handler(void)
 void DMA2_Stream0_IRQHandler(void)
 {
   /* USER CODE BEGIN DMA2_Stream0_IRQn 0 */
+  /* calculate DMA base and stream number */
+  DMA_Base_Registers *regs = (DMA_Base_Registers *)hdma_tim2_up.StreamBaseAddress;
+  mDmaSramISR = regs->ISR;
+
+	//mDmaSramISR = (DMA_Base_Registers *)(hdma_tim2_up->StreamBaseAddress)->ISR;
 
   /* USER CODE END DMA2_Stream0_IRQn 0 */
   HAL_DMA_IRQHandler(&hdma_tim2_up);

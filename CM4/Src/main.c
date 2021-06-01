@@ -37,7 +37,7 @@
  *
  * LogicAnalyser sampling is done on PE8..14 available on Arduino connector of MB1372
  *
- * Compression algorithm is done on M4 side, on MSB on data
+ * Masking algorithm is done on M4 side, on MSB on data
  *
  * Sampling is done in SARM buffer thanks to TIM2 and DMA2
  *  PE7..17 => DMA2 => SRAM_buff
@@ -45,9 +45,9 @@
  *
  * The number of DDR buffers is sent by Linux application at its start
  *
- * Compression is then performed by M4
+ * Masking of bit7 is then performed by M4
  *
- * Finally compressed buffers are transfered to DDR by DMA or virtualUART
+ * Finally masked data buffers are transfered to DDR by DMA or virtualUART
  *
  * Linux application send the "Set DATA" parameter in the Sampling command.
  * If "Set DATA" is set output data will be set by this FW on PE8..12, and these Ports will be initialized as output
@@ -167,6 +167,8 @@ uint8_t mPatternOut = 0, mPatterPreCounter = 0;
 Machine_State_t mMachineState = INITIALIZING;
 char testStr[21] = {"B0Ad4200000L00100000"};
 
+volatile uint32_t mDmaSramISR;
+
 /* USER CODE END PV */
 
 /* Private function prototypes -----------------------------------------------*/
@@ -263,6 +265,7 @@ static void TransferCompleteDDR(DMA_HandleTypeDef *DmaHandle)
             mArrayDdrBuffIndex = 0;
         }
     }
+    HAL_GPIO_TogglePin(LA_TRC1_GPIO_Port, LA_TRC1_Pin);
 }
 
 /**
@@ -273,10 +276,7 @@ static void HalfTransferCompleteSRAM(DMA_HandleTypeDef *DmaHandle)
 {
 	// 1st half buffer filled
 	fDdrDma2Send0 = SET;
-	if (HAL_GPIO_ReadPin(GPIOE, LA_0_Pin)) {
-        HAL_GPIO_WritePin(GPIOE, LA_0_Pin, GPIO_PIN_SET);
-
-	}
+	HAL_GPIO_WritePin(LA_TRC0_GPIO_Port, LA_TRC0_Pin, GPIO_PIN_SET);
 }
 
 /**
@@ -287,6 +287,7 @@ static void TransferCompleteSRAM(DMA_HandleTypeDef *DmaHandle)
 {
 	// 2nd half buffer filled
 	fDdrDma2Send1 = SET;
+	HAL_GPIO_WritePin(LA_TRC0_GPIO_Port, LA_TRC0_Pin, GPIO_PIN_RESET);
 	if (mSetData) {
 		mPatterPreCounter++;
 		if (mPatterPreCounter % 23 == 0) {
@@ -308,7 +309,7 @@ static void TransferErrorDDR(DMA_HandleTypeDef *DmaHandle)
 {
     mDMAerror = SET;
 #if TRC_LA
-    sprintf(mUartBuffTx1, "CM4 : DMA DDR TransferError CB !!!\n");
+    sprintf(mUartBuffTx1, "CM4 : DMA TransferError DDR CB !!!\n");
     VIRT_UART_Transmit(&huart1, (uint8_t*)mUartBuffTx1, strlen(mUartBuffTx1));
 #endif
 }
@@ -321,7 +322,8 @@ static void TransferErrorSRAM(DMA_HandleTypeDef *DmaHandle)
 {
     mDMAerror = SET;
 #if TRC_LA
-    sprintf(mUartBuffTx1, "CM4 : DMA SRAM TransferError CB !!!\n");
+    sprintf(mUartBuffTx1, "CM4 : DMA TransferError SRAM CB ISR=0x%lx !!!\n",
+    		mDmaSramISR);
     VIRT_UART_Transmit(&huart1, (uint8_t*)mUartBuffTx1, strlen(mUartBuffTx1));
 #endif
 }
@@ -385,7 +387,7 @@ uint8_t treatRxCommand2() {
         		m_samp_freq, mSetData);
         VIRT_UART_Transmit(&huart1, (uint8_t*)mUartBuffTx1, strlen(mUartBuffTx1));
 #endif
-        return true;
+        return 'S';
     } else if (VirtUart0ChannelBuffRx[0] == 'B') {
         for (int i=0; i<2; i++) {
             if (VirtUart0ChannelBuffRx[1+i] < '0' || VirtUart0ChannelBuffRx[1+i] > '9') {
@@ -405,10 +407,11 @@ uint8_t treatRxCommand2() {
 				mDdrBuffCount);
 		VIRT_UART_Transmit(&huart1, (uint8_t*)mUartBuffTx, strlen(mUartBuffTx));
 #endif
+        return 'B';
     } else if (VirtUart0ChannelBuffRx[0] == 'E') {
         // exit requested
         fStopRequested = SET;
-        return true;
+        return 'E';
     }
     return false;
 }
@@ -583,7 +586,9 @@ uint8_t compressFrame(uint16_t idxStart, uint16_t idxStop) {
  * Bit7=1: data present twice
  */
 uint8_t packFrame(uint16_t idxStart, uint16_t idxStop) {
+	HAL_GPIO_WritePin(LA_TRC2_GPIO_Port, LA_TRC2_Pin, GPIO_PIN_SET);
 	uint8_t res = 0;
+#if 0
 	for (int i=idxStart; i<idxStop; i++) {
 		if (mLastSamp != 0xFF) {  // needed to start the algo correctly
 			if (mLastSamp == (mSampBuff[i] & 0x7F)) {
@@ -597,6 +602,7 @@ uint8_t packFrame(uint16_t idxStart, uint16_t idxStop) {
 			}
 		} else {
 			mLastSamp = mSampBuff[i] & 0x7F;
+			continue;
 		}
 		if (mSampCount == mSramPacketSize/2) {
 			res = 1;
@@ -605,6 +611,17 @@ uint8_t packFrame(uint16_t idxStart, uint16_t idxStop) {
 			mSampCount = 0;
 		}
 	}
+#else
+	int i;
+	uint32_t * pSource = (uint32_t *)mSampBuff;
+	uint32_t * pDest = (uint32_t *)mSampBuffOut;
+	for (i=idxStart/4; i<idxStop/4; i++) {
+		*(pDest+i) = ((*(pSource+i)) & 0x7F7F7F7F);
+	}
+	if (idxStop == mSramPacketSize/2) res = 1;
+	else res = 2;
+#endif
+	HAL_GPIO_WritePin(LA_TRC2_GPIO_Port, LA_TRC2_Pin, GPIO_PIN_RESET);
 	return res;
 }
 
@@ -636,7 +653,7 @@ void LAStateMachine(void) {
     	// ready to accept a sampling command
         if (VirtUart0RxMsg) {
           VirtUart0RxMsg = RESET;
-          if (treatRxCommand2()) {
+          if (treatRxCommand2() == 'S') {
     		  // check SET DATA and set GPIOs accordingly
     		  config_GPIOs(mSetData);
         	  if (m_samp_freq > 5000000) {
@@ -715,9 +732,17 @@ void LAStateMachine(void) {
 #endif
 	    	mMachineState = SAMPLING_LOW_FREQ_BUFF2;
         }
+        if (mDMAerror) {
+        	mDMAerror = RESET;
+			HAL_DMA_Abort_IT(htim2.hdma[TIM_DMA_ID_UPDATE]);
+			HAL_TIM_Base_Stop(&htim2);
+			mMachineState = DDR_BUFFERS_OK;
+			sprintf(mUartBuffTx1, "CM4 : LAStateMachine SAMPLING_LOW_FREQ_BUFF1 mDMAerror !!!\n");
+			VIRT_UART_Transmit(&huart1, (uint8_t*)mUartBuffTx1, strlen(mUartBuffTx1));
+        }
         if (VirtUart0RxMsg) {
           VirtUart0RxMsg = RESET;
-          if (treatRxCommand2()) {
+          if (treatRxCommand2() == 'E') {
 			if (fStopRequested) {
 				fStopRequested = RESET;
 				HAL_DMA_Abort_IT(htim2.hdma[TIM_DMA_ID_UPDATE]);
@@ -748,9 +773,17 @@ void LAStateMachine(void) {
 
 	    	mMachineState = SAMPLING_LOW_FREQ_BUFF1;
         }
+        if (mDMAerror) {
+        	mDMAerror = RESET;
+			HAL_DMA_Abort_IT(htim2.hdma[TIM_DMA_ID_UPDATE]);
+			HAL_TIM_Base_Stop(&htim2);
+			mMachineState = DDR_BUFFERS_OK;
+			sprintf(mUartBuffTx1, "CM4 : LAStateMachine SAMPLING_LOW_FREQ_BUFF2 mDMAerror !!!\n");
+			VIRT_UART_Transmit(&huart1, (uint8_t*)mUartBuffTx1, strlen(mUartBuffTx1));
+        }
         if (VirtUart0RxMsg) {
           VirtUart0RxMsg = RESET;
-          if (treatRxCommand2()) {
+          if (treatRxCommand2() == 'E') {
 			if (fStopRequested) {
 				fStopRequested = RESET;
 				HAL_DMA_Abort_IT(htim2.hdma[TIM_DMA_ID_UPDATE]);
@@ -767,7 +800,7 @@ void LAStateMachine(void) {
         if (fDdrDma2Send0) {
             fDdrDma2Send0 = RESET;
 #ifdef COMPRESS
-            uint8_t res = packFrame(mSramPacketSize/2, mSramPacketSize);
+            uint8_t res = packFrame(0, mSramPacketSize/2);
             if (res == 1) {
     			// time to transfer raw buffer0 in DDR
     			HAL_DMA_Start_IT(&hdma_memtomem_dma2_stream1, (uint32_t)&mSampBuffOut[0],
@@ -784,9 +817,18 @@ void LAStateMachine(void) {
 #endif
 	    	mMachineState = SAMPLING_HIGH_FREQ_BUFF2;
         }
+        if (mDMAerror) {
+        	mDMAerror = RESET;
+            HAL_DMA_Abort_IT(&hdma_memtomem_dma2_stream1);
+			HAL_DMA_Abort_IT(htim2.hdma[TIM_DMA_ID_UPDATE]);
+			HAL_TIM_Base_Stop(&htim2);
+			mMachineState = DDR_BUFFERS_OK;
+			sprintf(mUartBuffTx1, "CM4 : LAStateMachine SAMPLING_HIGH_FREQ_BUFF1 mDMAerror !!!\n");
+			VIRT_UART_Transmit(&huart1, (uint8_t*)mUartBuffTx1, strlen(mUartBuffTx1));
+        }
         if (VirtUart0RxMsg) {
           VirtUart0RxMsg = RESET;
-          if (treatRxCommand2()) {
+          if (treatRxCommand2() == 'E') {
 			if (fStopRequested) {
 				fStopRequested = RESET;
 	            HAL_DMA_Abort_IT(&hdma_memtomem_dma2_stream1);
@@ -820,9 +862,18 @@ void LAStateMachine(void) {
 #endif
 	    	mMachineState = SAMPLING_HIGH_FREQ_BUFF1;
         }
+        if (mDMAerror) {
+        	mDMAerror = RESET;
+            HAL_DMA_Abort_IT(&hdma_memtomem_dma2_stream1);
+			HAL_DMA_Abort_IT(htim2.hdma[TIM_DMA_ID_UPDATE]);
+			HAL_TIM_Base_Stop(&htim2);
+			mMachineState = DDR_BUFFERS_OK;
+			sprintf(mUartBuffTx1, "CM4 : LAStateMachine SAMPLING_HIGH_FREQ_BUFF2 mDMAerror !!!\n");
+			VIRT_UART_Transmit(&huart1, (uint8_t*)mUartBuffTx1, strlen(mUartBuffTx1));
+        }
         if (VirtUart0RxMsg) {
           VirtUart0RxMsg = RESET;
-          if (treatRxCommand2()) {
+          if (treatRxCommand2() == 'E') {
 			if (fStopRequested) {
 				fStopRequested = RESET;
 	            HAL_DMA_Abort_IT(&hdma_memtomem_dma2_stream1);
@@ -1192,16 +1243,28 @@ static void MX_GPIO_Init(void)
 
   /* GPIO Ports Clock Enable */
   __HAL_RCC_GPIOE_CLK_ENABLE();
+  __HAL_RCC_GPIOD_CLK_ENABLE();
   __HAL_RCC_GPIOC_CLK_ENABLE();
   __HAL_RCC_GPIOH_CLK_ENABLE();
 
   /*Configure GPIO pins : LA_3_Pin LA_4_Pin LA_2_Pin LA_1_Pin
                            LA_0_Pin */
   GPIO_InitStruct.Pin = LA_3_Pin|LA_4_Pin|LA_2_Pin|LA_1_Pin
-                          |LA_0_Pin;
+                          |LA_0_Pin|LA_TRC1_Pin|LA_TRC0_Pin;
   GPIO_InitStruct.Mode = GPIO_MODE_INPUT;
   GPIO_InitStruct.Pull = GPIO_NOPULL;
   HAL_GPIO_Init(GPIOE, &GPIO_InitStruct);
+
+  GPIO_InitStruct.Pin = LA_TRC1_Pin|LA_TRC0_Pin;
+  GPIO_InitStruct.Mode = GPIO_MODE_OUTPUT_PP;
+  GPIO_InitStruct.Pull = GPIO_NOPULL;
+  HAL_GPIO_Init(GPIOE, &GPIO_InitStruct);
+
+  /*Configure GPIO pins : LA_TRC2_Pin */
+  GPIO_InitStruct.Pin = LA_TRC2_Pin;
+  GPIO_InitStruct.Mode = GPIO_MODE_OUTPUT_PP;
+  GPIO_InitStruct.Pull = GPIO_NOPULL;
+  HAL_GPIO_Init(GPIOD, &GPIO_InitStruct);
 
 }
 
