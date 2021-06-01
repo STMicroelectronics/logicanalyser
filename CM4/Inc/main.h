@@ -72,6 +72,12 @@ void Error_Handler(void);
 #define LA_1_GPIO_Port GPIOE
 #define LA_0_Pin GPIO_PIN_8
 #define LA_0_GPIO_Port GPIOE
+#define LA_TRC2_Pin GPIO_PIN_14
+#define LA_TRC2_GPIO_Port GPIOD
+#define LA_TRC1_Pin GPIO_PIN_7
+#define LA_TRC1_GPIO_Port GPIOE
+#define LA_TRC0_Pin GPIO_PIN_1
+#define LA_TRC0_GPIO_Port GPIOE
 /* USER CODE BEGIN Private defines */
 
 /* USER CODE END Private defines */
