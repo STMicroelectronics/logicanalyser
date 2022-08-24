@@ -6,7 +6,6 @@
 *.map
 *.mk
 *.bin
-*.elf
 *.html
 *.chm
 *.lib
