@@ -1,4 +1,0 @@
-MANIFEST_VERSION = openstlinux-5.10-dunfell-mp1-21-03-31
-KERNEL_DT = ./DeviceTree/LA_M4_FW/kernel
-UBOOT_DT = ./DeviceTree/LA_M4_FW/u-boot
-TFA_DT = ./DeviceTree/LA_M4_FW/tf-a
