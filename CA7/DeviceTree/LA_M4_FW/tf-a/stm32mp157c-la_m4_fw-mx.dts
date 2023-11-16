@@ -1,6 +1,6 @@
-/* SPDX-License-Identifier: (GPL-2.0+ OR BSD-3-Clause) */
+// SPDX-License-Identifier: (GPL-2.0-or-later OR BSD-3-Clause)
 /*
- * Copyright (C) STMicroelectronics 2022 - All Rights Reserved
+ * Copyright (C) 2023, STMicroelectronics - All Rights Reserved
  * Author: STM32CubeMX code generation for STMicroelectronics.
  */
 
@@ -11,11 +11,11 @@
 /dts-v1/;
 #include <dt-bindings/pinctrl/stm32-pinfunc.h>
 #include <dt-bindings/clock/stm32mp1-clksrc.h>
-#include <dt-bindings/soc/st,stm32-etzpc.h>
 #include "stm32mp15-mx.dtsi"
 
 #include "stm32mp157.dtsi"
 #include "stm32mp15xc.dtsi"
+#include "stm32mp15-pinctrl.dtsi"
 #include "stm32mp15xxac-pinctrl.dtsi"
 #include "stm32mp15-ddr.dtsi"
 
@@ -24,8 +24,8 @@
 /* USER CODE END includes */
 
 / {
-	model = "STMicroelectronics STM32MP157C-DK2 STM32CubeMX board - openstlinux-5.15-yocto-kirkstone-mp1-v22.06.15";
-	compatible = "st,stm32mp157c-la_m4_fw-mx", "st,stm32mp157";
+	model = "STMicroelectronics STM32MP157C-DK2 STM32CubeMX board";
+	compatible = "st,stm32mp157c-la_m4_fw-mx", "st,stm32mp157c-dk2", "st,stm32mp157";
 
 	memory@c0000000 {
 		device_type = "memory";
@@ -66,14 +66,21 @@
 		/* USER CODE BEGIN clocks */
 		/* USER CODE END clocks */
 
+		clk_hsi: clk-hsi {
+			clock-frequency = <64000000>;
+
+			/* USER CODE BEGIN clk_hsi */
+			/* USER CODE END clk_hsi */
+		};
 		clk_lse: clk-lse {
+			clock-frequency = <32768>;
 			st,drive = < LSEDRV_MEDIUM_HIGH >;
 
 			/* USER CODE BEGIN clk_lse */
 			/* USER CODE END clk_lse */
 		};
-
 		clk_hse: clk-hse {
+			status = "disabled";
 
 			/* USER CODE BEGIN clk_hse */
 			/* USER CODE END clk_hse */
@@ -83,12 +90,6 @@
 }; /*root*/
 
 &pinctrl {
-	rtc_pins_mx: rtc_mx-0 {
-		pins {
-			pinmux = <STM32_PINMUX('I', 8, ANALOG)>; /* RTC_LSCO */
-		};
-	};
-
 	sdmmc1_pins_mx: sdmmc1_mx-0 {
 		pins1 {
 			pinmux = <STM32_PINMUX('C', 8, AF12)>, /* SDMMC1_D0 */
@@ -138,62 +139,6 @@
 
 	/* USER CODE BEGIN pinctrl_z */
 	/* USER CODE END pinctrl_z */
-};
-
-&bsec{
-	status = "okay";
-
-	/* USER CODE BEGIN bsec */
-
-	board_id:board_id@ec{
-		reg = <0xec 0x4>;
-		st,non-secure-otp;
-	};
-	/* USER CODE END bsec */
-};
-
-&etzpc{
-	status = "okay";
-	st,decprot = <
-	/*"Non Secured" peripherals*/
-	DECPROT(STM32MP1_ETZPC_ADC_ID, DECPROT_NS_RW, DECPROT_UNLOCK)
-	DECPROT(STM32MP1_ETZPC_DMA1_ID, DECPROT_NS_RW, DECPROT_UNLOCK)
-	DECPROT(STM32MP1_ETZPC_DMAMUX_ID, DECPROT_NS_RW, DECPROT_UNLOCK)
-	DECPROT(STM32MP1_ETZPC_ETH_ID, DECPROT_NS_RW, DECPROT_UNLOCK)
-	DECPROT(STM32MP1_ETZPC_CEC_ID, DECPROT_NS_RW, DECPROT_UNLOCK)
-	DECPROT(STM32MP1_ETZPC_I2C1_ID, DECPROT_NS_RW, DECPROT_UNLOCK)
-	DECPROT(STM32MP1_ETZPC_I2C4_ID, DECPROT_NS_RW, DECPROT_UNLOCK)
-	DECPROT(STM32MP1_ETZPC_SPI2_ID, DECPROT_NS_RW, DECPROT_UNLOCK)
-	DECPROT(STM32MP1_ETZPC_RNG1_ID, DECPROT_NS_RW, DECPROT_UNLOCK)
-	DECPROT(STM32MP1_ETZPC_SAI2_ID, DECPROT_NS_RW, DECPROT_UNLOCK)
-	DECPROT(STM32MP1_ETZPC_TIM6_ID, DECPROT_NS_RW, DECPROT_UNLOCK)
-	DECPROT(STM32MP1_ETZPC_UART4_ID, DECPROT_NS_RW, DECPROT_UNLOCK)
-	DECPROT(STM32MP1_ETZPC_USART2_ID, DECPROT_NS_RW, DECPROT_UNLOCK)
-	DECPROT(STM32MP1_ETZPC_OTG_ID, DECPROT_NS_RW, DECPROT_UNLOCK)
-	DECPROT(STM32MP1_ETZPC_VREFBUF_ID, DECPROT_NS_RW, DECPROT_UNLOCK)
-	/*"NS_R S_W" peripherals*/
-	DECPROT(STM32MP1_ETZPC_DDRCTRL_ID, DECPROT_NS_R_S_W, DECPROT_LOCK)
-	DECPROT(STM32MP1_ETZPC_DDRPHYC_ID, DECPROT_NS_R_S_W, DECPROT_LOCK)
-	/*"Secured" peripherals*/
-	DECPROT(STM32MP1_ETZPC_STGENC_ID, DECPROT_S_RW, DECPROT_UNLOCK)
-	/*"Mcu Isolation" peripherals*/
-	DECPROT(STM32MP1_ETZPC_DMA2_ID, DECPROT_MCU_ISOLATION, DECPROT_UNLOCK)
-	DECPROT(STM32MP1_ETZPC_TIM2_ID, DECPROT_MCU_ISOLATION, DECPROT_UNLOCK)
-
-	/*Restriction: following IDs are not managed  - please to use User-Section if needed:
-		  STM32MP1_ETZPC_SRAMx_ID  STM32MP1_ETZPC_RETRAM_ID  STM32MP1_ETZPC_BKPSRAM_ID*/
-
-	/* USER CODE BEGIN etzpc_decprot */
-		/*STM32CubeMX generates a basic and standard configuration for ETZPC.
-		Additional device configurations can be added here if needed.
-		"etzpc" node could be also overloaded in "addons" User-Section.*/
-
-	DECPROT(STM32MP1_ETZPC_BKPSRAM_ID, DECPROT_S_RW, DECPROT_UNLOCK)
-	/* USER CODE END etzpc_decprot */
-	>;
-
-	/* USER CODE BEGIN etzpc */
-	/* USER CODE END etzpc */
 };
 
 &i2c4{
@@ -460,21 +405,6 @@
 	/* USER CODE END iwdg2 */
 };
 
-&pwr_regulators{
-	status = "okay";
-
-	/* USER CODE BEGIN pwr_regulators */
-	system_suspend_supported_soc_modes = <
-		STM32_PM_CSLEEP_RUN
-		STM32_PM_CSTOP_ALLOW_LP_STOP
-		STM32_PM_CSTOP_ALLOW_STANDBY_DDR_SR
-	>;
-	system_off_soc_mode = <STM32_PM_CSTOP_ALLOW_STANDBY_DDR_OFF>;
-	vdd-supply = <&vdd>;
-	vdd_3v3_usbfs-supply = <&vdd_usb>;
-	/* USER CODE END pwr_regulators */
-};
-
 &rcc{
 	status = "okay";
 
@@ -482,97 +412,105 @@
 	/* USER CODE END rcc */
 
 	st,clksrc = <
+		CLK_CKPER_HSI
+		CLK_SDMMC12_PLL4P
+		CLK_STGEN_HSI
+		CLK_I2C46_HSI
+		CLK_UART24_HSI
 		CLK_MPU_PLL1P
 		CLK_AXI_PLL2P
 		CLK_MCU_PLL3P
-		CLK_PLL12_HSI
-		CLK_PLL3_HSI
-		CLK_PLL4_HSI
-		CLK_RTC_LSE
-		CLK_MCO1_DISABLED
-		CLK_MCO2_DISABLED
 	>;
 	st,clkdiv = <
-		1 		/*MPU*/
-		0 		/*AXI*/
-		0 		/*MCU*/
-		1 		/*APB1*/
-		1 		/*APB2*/
-		1 		/*APB3*/
-		1 		/*APB4*/
-		2 		/*APB5*/
-		23 		/*RTC*/
-		0 		/*MCO1*/
-		0 		/*MCO2*/
+		DIV(DIV_MPU, 1)
+		DIV(DIV_AXI, 0)
+		DIV(DIV_MCU, 0)
+		DIV(DIV_APB1, 1)
+		DIV(DIV_APB2, 1)
+		DIV(DIV_APB3, 1)
+		DIV(DIV_APB4, 1)
+		DIV(DIV_APB5, 2)
+		DIV(DIV_RTC, 23)
+		DIV(DIV_MCO1, 0)
+		DIV(DIV_MCO2, 0)
 	>;
-	st,pkcs = <
-		CLK_CKPER_HSI
-		CLK_ETH_PLL4P
-		CLK_SDMMC12_PLL4P
-		CLK_STGEN_HSI
-		CLK_USBPHY_PLL4R
-		CLK_SPI2S1_DISABLED
-		CLK_SPI2S23_PLL3Q
-		CLK_SPI45_DISABLED
-		CLK_SPI6_DISABLED
-		CLK_I2C46_HSI
-		CLK_SDMMC3_DISABLED
-		CLK_USBO_USBPHY
-		CLK_ADC_CKPER
-		CLK_CEC_LSE
-		CLK_I2C12_HSI
-		CLK_I2C35_DISABLED
-		CLK_UART1_DISABLED
-		CLK_UART24_HSI
-		CLK_UART35_DISABLED
-		CLK_UART6_DISABLED
-		CLK_UART78_DISABLED
-		CLK_SPDIF_DISABLED
-		CLK_SAI1_DISABLED
-		CLK_SAI2_PLL3Q
-		CLK_SAI3_DISABLED
-		CLK_SAI4_DISABLED
-		CLK_RNG1_LSI
-		CLK_LPTIM1_DISABLED
-		CLK_LPTIM23_DISABLED
-		CLK_LPTIM45_DISABLED
-	>;
+	st,pll_vco {
+		pll1_vco_800Mhz: pll1-vco-800Mhz {
+			src = < CLK_PLL12_HSI >;
+			divmn = < 3 24 >;
+		};
+		pll2_vco_800Mhz: pll2-vco-800Mhz {
+			src = < CLK_PLL12_HSI >;
+			divmn = < 3 24 >;
+		};
+		pll3_vco_400Mhz: pll3-vco-400Mhz {
+			src = < CLK_PLL3_HSI >;
+			divmn = < 3 24 >;
+		};
+		pll4_vco_416Mhz: pll4-vco-416Mhz {
+			src = < CLK_PLL4_HSI >;
+			divmn = < 3 25 >;
+		};
+		/* USER CODE BEGIN rcc_st-pll_vco */
+		/* USER CODE END rcc_st-pll_vco */
+	};
+
 	pll1:st,pll@0 {
 		compatible = "st,stm32mp1-pll";
 		reg = <0>;
-		cfg = < 3 24 0 1 1 PQR(1,0,0) >;
+
+		st,pll = < &pll1_cfg1 >;
+
+		pll1_cfg1: pll1_cfg1 {
+			st,pll_vco = < &pll1_vco_800Mhz >;
+			st,pll_div_pqr = < 0 1 1 >;
+		};
+		/* USER CODE BEGIN pll1 */
+		/* USER CODE END pll1 */
 	};
+
 	pll2:st,pll@1 {
 		compatible = "st,stm32mp1-pll";
 		reg = <1>;
-		cfg = < 3 24 1 0 0 PQR(1,1,1) >;
+
+		st,pll = < &pll2_cfg1 >;
+
+		pll2_cfg1: pll2_cfg1 {
+			st,pll_vco = < &pll2_vco_800Mhz >;
+			st,pll_div_pqr = < 1 0 0 >;
+		};
+		/* USER CODE BEGIN pll2 */
+		/* USER CODE END pll2 */
 	};
+
 	pll3:st,pll@2 {
 		compatible = "st,stm32mp1-pll";
 		reg = <2>;
-		cfg = < 3 24 1 3 36 PQR(1,1,0) >;
+
+		st,pll = < &pll3_cfg1 >;
+
+		pll3_cfg1: pll3_cfg1 {
+			st,pll_vco = < &pll3_vco_400Mhz >;
+			st,pll_div_pqr = < 1 3 36 >;
+		};
+		/* USER CODE BEGIN pll3 */
+		/* USER CODE END pll3 */
 	};
+
 	pll4:st,pll@3 {
 		compatible = "st,stm32mp1-pll";
 		reg = <3>;
-		cfg = < 3 25 3 4 15 PQR(1,1,1) >;
+
+		st,pll = < &pll4_cfg1 >;
+
+		pll4_cfg1: pll4_cfg1 {
+			st,pll_vco = < &pll4_vco_416Mhz >;
+			st,pll_div_pqr = < 3 4 15 >;
+		};
+		/* USER CODE BEGIN pll4 */
+		/* USER CODE END pll4 */
 	};
-};
 
-&rng1{
-	status = "okay";
-
-	/* USER CODE BEGIN rng1 */
-	/* USER CODE END rng1 */
-};
-
-&rtc{
-	pinctrl-names = "default";
-	pinctrl-0 = <&rtc_pins_mx>;
-	status = "okay";
-
-	/* USER CODE BEGIN rtc */
-	/* USER CODE END rtc */
 };
 
 &sdmmc1{
@@ -586,13 +524,6 @@
 	bus-width = <4>;
 	vmmc-supply = <&v3v3>;
 	/* USER CODE END sdmmc1 */
-};
-
-&tamp{
-	status = "okay";
-
-	/* USER CODE BEGIN tamp */
-	/* USER CODE END tamp */
 };
 
 &uart4{

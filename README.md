@@ -7,9 +7,9 @@ The logic analyzer example can be executed on the **STM32MP135C/F-DK Discovery k
 
 This project is linked with the [**meta-st-stm32mpu-app-logicanalyser** meta layer](https://github.com/STMicroelectronics/meta-st-stm32mpu-app-logicanalyser) that is the application for the logic analyzer example (based on GTK for the user interface). In particular, the STM32P157 Cortex-M4 firmware (how2elbd04140.elf), generated thanks to this project, is copied in the meta layer.
 
-This version is based on the [**STM32MP1-ecosystem-v4.0.0 ecosystem release**](https://wiki.st.com/stm32mpu/wiki/STM32_MPU_ecosystem_release_note_-_v4.0.0) of the STM32MPU Embedded Software distribution which means:
-- STM32CubeMX v6.6.0
-- STM23CubeIDE v1.10.0
+This version is based on the [**STM32MP1-ecosystem-v5.0.1 ecosystem release**](https://wiki.st.com/stm32mpu/wiki/STM32_MPU_ecosystem_release_note_-_v5.0.0) of the STM32MPU Embedded Software distribution which means:
+- STM32CubeMX v6.9.0
+- STM23CubeIDE v1.13.0
 - STM32CubeMP1 v1.6.0
 
 ## Table of Contents
@@ -29,9 +29,9 @@ This version is based on the [**STM32MP1-ecosystem-v4.0.0 ecosystem release**](h
 ```
 PC $> cd <your STM32CubeIDE workspace>
 ```
-- Add the logicanalyser project (**kirkstone** branch):
+- Add the logicanalyser project (**mickledore** branch):
 ```
-PC $> git clone https://github.com/STMicroelectronics/logicanalyser.git -b kirkstone
+PC $> git clone https://github.com/STMicroelectronics/logicanalyser.git -b mickledore
 ```
 - Use the STM32CubeMX and STM32CubeIDE tools to modify (if needed) and rebuild the Cortex-M4 firmware. Note the following files:
   - LA_M4_FW.ioc: STM32CubeMX project

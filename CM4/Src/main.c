@@ -25,10 +25,10 @@
 /* USER CODE BEGIN Includes */
 /*
  * This demonstration shows code examples of inter-core data exchanges
- * For high data rate (more than 5MHz sampling), it relies on a SDB Linux driver
+ * For high data rate (more than 2MHz sampling), it relies on a SDB Linux driver
  *  which provides DDR buffers allocations, and DDR DMA transfers
  *
- * For low data rate (less or equal to 5MHz sampling), it relies on VirtualUART
+ * For low data rate (less or equal to 2MHz sampling), it relies on VirtualUART
  *  over RPMSG
  *
  * 2 virtualUARTS are created:
@@ -537,8 +537,8 @@ void LAStateMachine(void) {
           if (treatRxCommand2() == 'S') {
     		  // check SET DATA and set GPIOs accordingly
     		  config_GPIOs(mSetData);
-        	  if (m_samp_freq > 5000000) {
-        		  //   if > 4MHz => no compression & Data over DMA
+        	  if (m_samp_freq > 2000000) {
+        		  //   if > 2MHz => no compression & Data over DMA
 				  uint32_t period = mTIM2freq / m_samp_freq;
 				  configureTimer(period);
 				  mArrayDdrBuffIndex = 0;
@@ -565,7 +565,7 @@ void LAStateMachine(void) {
 					  // no machine state change
 				  }
         	  } else {
-            	  // samp. freq.  < 4MHz => compression & Data over TTY
+            	  // samp. freq.  < 2MHz => compression & Data over TTY
         		  uint32_t period = mTIM2freq / m_samp_freq;
         		  configureTimer(period);
         		  mArrayDdrBuffIndex = 0;
@@ -806,7 +806,7 @@ int main(void)
   else
   {
     /* IPCC initialisation */
-     MX_IPCC_Init();
+    MX_IPCC_Init();
     /* OpenAmp initialisation ---------------------------------*/
     MX_OPENAMP_Init(RPMSG_REMOTE, NULL);
   }
@@ -908,7 +908,6 @@ void SystemClock_Config(void)
                               |RCC_OSCILLATORTYPE_LSE;
   RCC_OscInitStruct.LSEState = RCC_LSE_ON;
   RCC_OscInitStruct.HSIState = RCC_HSI_ON;
-  RCC_OscInitStruct.HSICalibrationValue = 16;
   RCC_OscInitStruct.HSIDivValue = RCC_HSI_DIV1;
   RCC_OscInitStruct.LSIState = RCC_LSI_ON;
   RCC_OscInitStruct.PLL.PLLState = RCC_PLL_ON;
@@ -1116,20 +1115,24 @@ static void MX_DMA_Init(void)
 static void MX_GPIO_Init(void)
 {
   GPIO_InitTypeDef GPIO_InitStruct = {0};
+/* USER CODE BEGIN MX_GPIO_Init_1 */
+/* USER CODE END MX_GPIO_Init_1 */
 
   /* GPIO Ports Clock Enable */
   __HAL_RCC_GPIOE_CLK_ENABLE();
   __HAL_RCC_GPIOC_CLK_ENABLE();
   __HAL_RCC_GPIOH_CLK_ENABLE();
 
-  /*Configure GPIO pins : PE11 PE12 PE10 PE9
-                           PE8 */
-  GPIO_InitStruct.Pin = GPIO_PIN_11|GPIO_PIN_12|GPIO_PIN_10|GPIO_PIN_9
-                          |GPIO_PIN_8;
+  /*Configure GPIO pins : LA_3_Pin LA_4_Pin LA_2_Pin LA_1_Pin
+                           LA_0_Pin */
+  GPIO_InitStruct.Pin = LA_3_Pin|LA_4_Pin|LA_2_Pin|LA_1_Pin
+                          |LA_0_Pin;
   GPIO_InitStruct.Mode = GPIO_MODE_INPUT;
   GPIO_InitStruct.Pull = GPIO_NOPULL;
   HAL_GPIO_Init(GPIOE, &GPIO_InitStruct);
 
+/* USER CODE BEGIN MX_GPIO_Init_2 */
+/* USER CODE END MX_GPIO_Init_2 */
 }
 
 /* USER CODE BEGIN 4 */
