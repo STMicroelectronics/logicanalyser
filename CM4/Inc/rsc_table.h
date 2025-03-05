@@ -20,7 +20,7 @@
 #ifndef RSC_TABLE_H_
 #define RSC_TABLE_H_
 
-#include "openamp/open_amp.h"
+#include "openamp.h"
 #include "openamp_conf.h"
 
 /* Private includes ----------------------------------------------------------*/

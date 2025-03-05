@@ -25,11 +25,11 @@
   * @{
   */
 
-/** @addtogroup STM32MP1xx_log
+/** @addtogroup STM32MP2xx_log
   * @{
   */
 
-/** @addtogroup STM32MP1xx_Log_Private_Includes
+/** @addtogroup STM32MP2xx_Log_Private_Includes
   * @{
   */
 #include "openamp_log.h"
@@ -37,7 +37,7 @@
   * @}
   */
 
-/** @addtogroup STM32MP1xx_Log_Private_TypesDefinitions
+/** @addtogroup STM32MP2xx_Log_Private_TypesDefinitions
   * @{
   */
 
@@ -45,7 +45,7 @@
   * @}
   */
 
-/** @addtogroup STM32MP1xx_Log_Private_Defines
+/** @addtogroup STM32MP2xx_Log_Private_Defines
   * @{
   */
 

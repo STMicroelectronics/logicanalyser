@@ -21,7 +21,6 @@
 
 /* Includes ------------------------------------------------------------------*/
 #include "main.h"
-
 /* USER CODE BEGIN Includes */
 
 /* USER CODE END Includes */
@@ -65,6 +64,7 @@ extern DMA_HandleTypeDef hdma_tim2_up;
   */
 void HAL_MspInit(void)
 {
+
   /* USER CODE BEGIN MspInit 0 */
 
   /* USER CODE END MspInit 0 */
@@ -96,18 +96,18 @@ void HAL_MspInit(void)
 }
 
 /**
-* @brief IPCC MSP Initialization
-* This function configures the hardware resources used in this example
-* @param hipcc: IPCC handle pointer
-* @retval None
-*/
+  * @brief IPCC MSP Initialization
+  * This function configures the hardware resources used in this example
+  * @param hipcc: IPCC handle pointer
+  * @retval None
+  */
 void HAL_IPCC_MspInit(IPCC_HandleTypeDef* hipcc)
 {
   if(hipcc->Instance==IPCC)
   {
-  /* USER CODE BEGIN IPCC_MspInit 0 */
+    /* USER CODE BEGIN IPCC_MspInit 0 */
 
-  /* USER CODE END IPCC_MspInit 0 */
+    /* USER CODE END IPCC_MspInit 0 */
     /* Peripheral clock enable */
     __HAL_RCC_IPCC_CLK_ENABLE();
     /* IPCC interrupt Init */
@@ -115,53 +115,54 @@ void HAL_IPCC_MspInit(IPCC_HandleTypeDef* hipcc)
     HAL_NVIC_EnableIRQ(IPCC_RX1_IRQn);
     HAL_NVIC_SetPriority(IPCC_TX1_IRQn, 1, 0);
     HAL_NVIC_EnableIRQ(IPCC_TX1_IRQn);
-  /* USER CODE BEGIN IPCC_MspInit 1 */
+    /* USER CODE BEGIN IPCC_MspInit 1 */
 
-  /* USER CODE END IPCC_MspInit 1 */
+    /* USER CODE END IPCC_MspInit 1 */
+
   }
 
 }
 
 /**
-* @brief IPCC MSP De-Initialization
-* This function freeze the hardware resources used in this example
-* @param hipcc: IPCC handle pointer
-* @retval None
-*/
+  * @brief IPCC MSP De-Initialization
+  * This function freeze the hardware resources used in this example
+  * @param hipcc: IPCC handle pointer
+  * @retval None
+  */
 void HAL_IPCC_MspDeInit(IPCC_HandleTypeDef* hipcc)
 {
   if(hipcc->Instance==IPCC)
   {
-  /* USER CODE BEGIN IPCC_MspDeInit 0 */
+    /* USER CODE BEGIN IPCC_MspDeInit 0 */
 
-  /* USER CODE END IPCC_MspDeInit 0 */
+    /* USER CODE END IPCC_MspDeInit 0 */
     /* Peripheral clock disable */
     __HAL_RCC_IPCC_CLK_DISABLE();
 
     /* IPCC interrupt DeInit */
     HAL_NVIC_DisableIRQ(IPCC_RX1_IRQn);
     HAL_NVIC_DisableIRQ(IPCC_TX1_IRQn);
-  /* USER CODE BEGIN IPCC_MspDeInit 1 */
+    /* USER CODE BEGIN IPCC_MspDeInit 1 */
 
-  /* USER CODE END IPCC_MspDeInit 1 */
+    /* USER CODE END IPCC_MspDeInit 1 */
   }
 
 }
 
 /**
-* @brief TIM_Base MSP Initialization
-* This function configures the hardware resources used in this example
-* @param htim_base: TIM_Base handle pointer
-* @retval None
-*/
+  * @brief TIM_Base MSP Initialization
+  * This function configures the hardware resources used in this example
+  * @param htim_base: TIM_Base handle pointer
+  * @retval None
+  */
 void HAL_TIM_Base_MspInit(TIM_HandleTypeDef* htim_base)
 {
   if(htim_base->Instance==TIM2)
   {
-  /* USER CODE BEGIN TIM2_MspInit 0 */
+    /* USER CODE BEGIN TIM2_MspInit 0 */
   __HAL_RCC_DMA2_CLK_ENABLE();
   __HAL_RCC_DMAMUX_CLK_ENABLE();
-  /* USER CODE END TIM2_MspInit 0 */
+    /* USER CODE END TIM2_MspInit 0 */
     /* Peripheral clock enable */
     __HAL_RCC_TIM2_CLK_ENABLE();
 
@@ -184,34 +185,35 @@ void HAL_TIM_Base_MspInit(TIM_HandleTypeDef* htim_base)
 
     __HAL_LINKDMA(htim_base,hdma[TIM_DMA_ID_UPDATE],hdma_tim2_up);
 
-  /* USER CODE BEGIN TIM2_MspInit 1 */
+    /* USER CODE BEGIN TIM2_MspInit 1 */
 
-  /* USER CODE END TIM2_MspInit 1 */
+    /* USER CODE END TIM2_MspInit 1 */
+
   }
 
 }
 
 /**
-* @brief TIM_Base MSP De-Initialization
-* This function freeze the hardware resources used in this example
-* @param htim_base: TIM_Base handle pointer
-* @retval None
-*/
+  * @brief TIM_Base MSP De-Initialization
+  * This function freeze the hardware resources used in this example
+  * @param htim_base: TIM_Base handle pointer
+  * @retval None
+  */
 void HAL_TIM_Base_MspDeInit(TIM_HandleTypeDef* htim_base)
 {
   if(htim_base->Instance==TIM2)
   {
-  /* USER CODE BEGIN TIM2_MspDeInit 0 */
+    /* USER CODE BEGIN TIM2_MspDeInit 0 */
 
-  /* USER CODE END TIM2_MspDeInit 0 */
+    /* USER CODE END TIM2_MspDeInit 0 */
     /* Peripheral clock disable */
     __HAL_RCC_TIM2_CLK_DISABLE();
 
     /* TIM2 DMA DeInit */
     HAL_DMA_DeInit(htim_base->hdma[TIM_DMA_ID_UPDATE]);
-  /* USER CODE BEGIN TIM2_MspDeInit 1 */
+    /* USER CODE BEGIN TIM2_MspDeInit 1 */
 
-  /* USER CODE END TIM2_MspDeInit 1 */
+    /* USER CODE END TIM2_MspDeInit 1 */
   }
 
 }
